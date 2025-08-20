@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const os = require('os');
 const config = require('./config'); // Configuration (loads env)
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
@@ -8,6 +9,7 @@ const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
 const app = express();
 const port = process.env.PORT || 3000; // Allow overriding port
+const host = process.env.HOST || '0.0.0.0'; // Bind to all interfaces for LAN access
 
 // Simple in-memory cache { address: { data, expiresAt } }
 const CACHE_TTL = (parseInt(process.env.CACHE_TTL_SECONDS, 10) || 900) * 1000; // default 15m
@@ -139,6 +141,21 @@ app.post('/api/getPropertyDetails', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
+app.listen(port, host, () => {
+  // Determine a likely LAN IPv4 address
+  const nets = os.networkInterfaces();
+  let lan = null;
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family === 'IPv4' && !net.internal) {
+        lan = net.address;
+        break;
+      }
+    }
+    if (lan) break;
+  }
+  console.log(`Server listening on:`);
+  console.log(`  Local:   http://localhost:${port}`);
+  if (lan) console.log(`  Network: http://${lan}:${port}`);
+  else console.log('  Network: (no external IPv4 detected)');
 });
