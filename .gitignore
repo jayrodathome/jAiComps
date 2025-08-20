@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.local
+*.log
+logs/
+npm-debug.log*
+package-lock.json
+DS_Store
+Thumbs.db# Node.js dependencies
+node_modules/
+
+# Configuration file with secrets
+# DO NOT COMMIT THIS FILE!
+config.js
+package-lock.json

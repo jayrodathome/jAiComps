@@ -1,0 +1,67 @@
+{
+  "address": "14378 30th Ave NE, Seattle, WA 98125, USA",
+  "amenities_access": {
+    "walk_score": 70,
+    "transit_score": 52,
+    "bike_score": 75,
+    "notable_amenities": {
+      "supermarkets": [
+        {"name": "Safeway", "distance_mi": 0.9},
+        {"name": "QFC", "distance_mi": 1.0},
+        {"name": "Trader Joe's", "distance_mi": 2.4}
+      ],
+      "pharmacies": [
+        {"name": "Bartell Drugs (Rite Aid)", "distance_mi": 0.6},
+        {"name": "Walgreens", "distance_mi": 0.8}
+      ],
+      "hospitals": [
+        {"name": "UW Medical Center – Northwest (24/7 ER)", "distance_mi": 2.5}
+      ],
+      "senior_centers": [
+        {"name": "Lake City Seniors", "distance_mi": 0.4}
+      ],
+      "shopping_business_districts": [
+        {"name": "Lake City Way commercial corridor", "distance_mi": 0.5},
+        {"name": "Northgate regional shopping district", "distance_mi": 1.5}
+      ],
+      "parks": [
+        {"name": "Jackson Park", "distance_mi": 0.3},
+        {"name": "Little Brook Park", "distance_mi": 0.4},
+        {"name": "Carkeek Park", "distance_mi": 3.8}
+      ]
+    }
+  },
+  "commute": {
+    "transit": {
+      "bus_access": "Multiple King County Metro bus routes within a short walk, providing direct access to Northgate Light Rail Station, University District, Downtown Seattle, and Shoreline.",
+      "major_routes": ["I-5", "WA-522 (Lake City Way)"],
+      "drive_times": {
+        "downtown_seattle": {"drive_min": 18, "drive_mi": 9.5},
+        "uw_campus": {"drive_min": 12, "drive_mi": 6.8},
+        "seatac_airport": {"drive_min": 30, "drive_mi": 23}
+      }
+    }
+  },
+  "schools": {
+    "elementary": {"name": "Olympic Hills Elementary School", "distance_mi": 0.8},
+    "middle": {"name": "Jane Addams Middle School", "distance_mi": 1.6},
+    "high": {"name": "Nathan Hale High School", "distance_mi": 1.8}
+  },
+  "crime": {
+    "context": "The Lake City neighborhood experiences property crime rates higher than the city average, while violent crime rates are more moderate. It is advisable to consult the Seattle Police Department's public data dashboards for the most current statistics.",
+    "trend": "City-wide data for Seattle indicated a decline in both violent and property crime rates through 2024 and early 2025."
+  },
+  "broadband": {
+    "cable": {"provider": "XFINITY from Comcast", "max_speed_mbps": 2000, "coverage_percent": 100},
+    "fiber": {"providers": ["Quantum Fiber", "Astound Broadband"], "availability": "Widespread, address verification recommended"},
+    "5g_home": ["T-Mobile", "Verizon"],
+    "satellite": ["Starlink", "HughesNet"],
+    "notes": "Excellent access to high-speed internet. Multiple providers offer gigabit speeds via fiber and cable, ensuring competitive options for residents."
+  },
+  "environmental_risk": {
+    "flood_risk": "Low. The property is situated at an elevation that is not within a designated FEMA flood zone.",
+    "fire_risk": "Low. The primary risk is typical for an urban residential area rather than from wildfires.",
+    "heat_risk": "Moderate. Like the broader Seattle area, this location is susceptible to periods of extreme heat during summer heat waves.",
+    "air_quality": "Good. Air quality is generally good but can be significantly impacted by wildfire smoke during the late summer and early fall months."
+  }
+}

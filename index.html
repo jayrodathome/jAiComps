@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Property Details</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <main class="container">
+        <h1>Property Details Generator</h1>
+        <form id="address-form" class="card">
+            <input type="text" id="address-input" placeholder="Enter a property address" required>
+            <button type="submit">Get Details</button>
+        </form>
+
+        <!-- The JavaScript will populate this div with the property data -->
+        <div id="property-list">
+            <!-- This area will be populated after an address is submitted. -->
+        </div>
+    </main>
+    <script src="app.js"></script>
+</body>
+</html>
