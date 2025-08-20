@@ -96,3 +96,38 @@ h1 {
     margin-right: 10px;
     margin-bottom: 10px;
 }
+
+/* New layout for Walk / Transit / Bike score boxes */
+.score-grid {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+}
+
+.score-box {
+    flex: 1 1 120px;
+    background: #f5f9fc;
+    border: 2px solid #d6e8f5;
+    border-radius: 10px;
+    padding: 12px 14px;
+    text-align: center;
+    min-width: 140px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.score-box strong {
+    display: block;
+    font-size: 0.85rem;
+    letter-spacing: .5px;
+    color: #2c3e50;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.score-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #1d6fa5;
+    line-height: 1;
+}

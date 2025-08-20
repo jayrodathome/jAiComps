@@ -54,10 +54,11 @@ const renderPropertyData = (container, data) => {
 
   renderSection('Amenities Access', (d) => {
     const scoresDiv = document.createElement('div');
+    scoresDiv.className = 'score-grid';
     scoresDiv.innerHTML = `
-      <span class="score">Walk: ${d.walk_score}</span>
-      <span class="score">Transit: ${d.transit_score}</span>
-      <span class="score">Bike: ${d.bike_score}</span>`;
+      <div class="score-box"><strong>Walk Score</strong><div class="score-value">${d.walk_score}</div></div>
+      <div class="score-box"><strong>Transit Score</strong><div class="score-value">${d.transit_score}</div></div>
+      <div class="score-box"><strong>Bike Score</strong><div class="score-value">${d.bike_score}</div></div>`;
 
     const ul = document.createElement('ul');
     const notable = d.notable_amenities;
