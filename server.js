@@ -17,6 +17,8 @@ const cache = new Map();
 app.use(cors());
 // Enable the server to understand JSON in request bodies
 app.use(express.json());
+// Serve static frontend assets (index.html, app.js, style.css, etc.)
+app.use(express.static(__dirname));
 
 // Basic rate limiting to protect the endpoint
 const limiter = rateLimit({
@@ -89,6 +91,26 @@ ${address}
   }
 }
 
+// Validate & normalize the structure we expect from the model so the frontend doesn't break.
+function normalizePropertyData(data) {
+  const safe = (v, fallback) => (v === undefined || v === null ? fallback : v);
+
+  // Commute defaults
+  data.commute = safe(data.commute, {});
+  data.commute.transit = safe(data.commute.transit, {});
+  data.commute.transit.bus_access = safe(data.commute.transit.bus_access, 'N/A');
+  data.commute.transit.major_routes = Array.isArray(data.commute.transit.major_routes) ? data.commute.transit.major_routes : [];
+  const dt = data.commute.transit.drive_times = safe(data.commute.transit.drive_times, {});
+  // Normalize each provided drive time entry; don't inject city-specific keys.
+  Object.keys(dt).forEach(k => {
+    dt[k] = safe(dt[k], {});
+    dt[k].drive_min = safe(dt[k].drive_min, 'N/A');
+    dt[k].drive_mi = safe(dt[k].drive_mi, 'N/A');
+  });
+
+  return data;
+}
+
 // Define the API endpoint that our front-end will call
 app.post('/api/getPropertyDetails', async (req, res) => {
   const start = Date.now();
@@ -104,7 +126,8 @@ app.post('/api/getPropertyDetails', async (req, res) => {
       return res.json({ ...cached.data, _cached: true });
     }
 
-    const propertyData = await getPropertyDetailsFromGemini(address);
+  let propertyData = await getPropertyDetailsFromGemini(address);
+  propertyData = normalizePropertyData(propertyData);
     cache.set(address.toLowerCase(), { data: propertyData, expiresAt: Date.now() + CACHE_TTL });
     res.json(propertyData);
   } catch (error) {

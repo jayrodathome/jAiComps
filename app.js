@@ -79,25 +79,26 @@ const renderPropertyData = (container, data) => {
   }, data.amenities_access);
 
   renderSection('Commute', (d) => {
+    const transit = d.transit || {};
     const busAccess = document.createElement('p');
-    busAccess.innerHTML = `<strong>Bus Access:</strong> ${d.transit.bus_access}`;
+    busAccess.innerHTML = `<strong>Bus Access:</strong> ${transit.bus_access || 'N/A'}`;
 
     const majorRoutes = document.createElement('p');
-    majorRoutes.innerHTML = `<strong>Major Routes:</strong> ${d.transit.major_routes.join(', ')}`;
+    const routes = Array.isArray(transit.major_routes) ? transit.major_routes : [];
+    majorRoutes.innerHTML = `<strong>Major Routes:</strong> ${routes.join(', ') || 'N/A'}`;
 
     const ul = document.createElement('ul');
-    const driveTimes = d.transit.drive_times;
-    const driveTimeDestinations = {
-      "Downtown Seattle": driveTimes.downtown_seattle,
-      "UW Campus": driveTimes.uw_campus,
-      "SeaTac Airport": driveTimes.seatac_airport
-    };
-
-    for (const [dest, details] of Object.entries(driveTimeDestinations)) {
+    const driveTimes = (transit && transit.drive_times) || {};
+    Object.entries(driveTimes).forEach(([key, details]) => {
+      const prettyName = key
+        .replace(/_/g, ' ')
+        .replace(/\b(\w)/g, c => c.toUpperCase());
       const li = document.createElement('li');
-      li.innerHTML = `<strong>${dest}:</strong> ${details.drive_min} min (${details.drive_mi} mi)`;
+      const dm = details && details.drive_min !== undefined ? details.drive_min : 'N/A';
+      const mi = details && details.drive_mi !== undefined ? details.drive_mi : 'N/A';
+      li.innerHTML = `<strong>${prettyName}:</strong> ${dm} min (${mi} mi)`;
       ul.appendChild(li);
-    }
+    });
     return [busAccess, majorRoutes, ul];
   }, data.commute);
 
@@ -170,7 +171,7 @@ const main = () => {
       const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
       let response;
       try {
-        response = await fetch('http://localhost:3000/api/getPropertyDetails', {
+  response = await fetch('/api/getPropertyDetails', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
