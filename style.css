@@ -1,7 +1,18 @@
+:root {
+    --background-color: #f8f9fa;
+    --text-color: #212529;
+    --primary-color: #007bff;
+    --primary-color-hover: #0056b3;
+    --card-background: #ffffff;
+    --card-border-color: #e9ecef;
+    --card-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    --font-family: 'Inter', sans-serif;
+}
+
 body {
-    font-family: 'Roboto', sans-serif;
-    background-color: #f4f7f6;
-    color: #333;
+    font-family: var(--font-family);
+    background-color: var(--background-color);
+    color: var(--text-color);
     margin: 0;
     padding: 20px;
 }
@@ -12,34 +23,42 @@ body {
 }
 
 h1 {
-    color: #2c3e50;
+    color: var(--text-color);
     text-align: center;
     margin-bottom: 30px;
+    font-weight: 600;
 }
 
 #address-form {
     display: flex;
     gap: 10px;
-    padding: 15px;
-    border-left-color: #2ecc71; /* Green for the input form */
+    padding: 20px;
+    border: none;
 }
 
 #address-input {
     flex-grow: 1;
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
+    padding: 12px 15px;
+    border: 1px solid var(--card-border-color);
+    border-radius: 8px;
     font-size: 1em;
+    font-family: var(--font-family);
 }
 
 #address-form button {
-    padding: 10px 20px;
+    padding: 12px 20px;
     border: none;
-    background-color: #2ecc71;
+    background-color: var(--primary-color);
     color: white;
-    border-radius: 4px;
+    border-radius: 8px;
     cursor: pointer;
     font-size: 1em;
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+}
+
+#address-form button:hover {
+    background-color: var(--primary-color-hover);
 }
 
 #address-form button:disabled {
@@ -47,25 +66,32 @@ h1 {
     cursor: not-allowed;
 }
 
+.checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .card {
-    background-color: #ffffff;
-    border-radius: 8px;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    margin-bottom: 20px;
-    padding: 20px 25px;
-    border-left: 5px solid #3498db;
+    background-color: var(--card-background);
+    border-radius: 12px;
+    box-shadow: var(--card-shadow);
+    margin-bottom: 25px;
+    padding: 25px 30px;
+    border: 1px solid var(--card-border-color);
 }
 
 .card h2 {
     margin-top: 0;
-    color: #3498db;
-    border-bottom: 1px solid #ecf0f1;
-    padding-bottom: 10px;
-    margin-bottom: 15px;
+    color: var(--text-color);
+    font-weight: 600;
+    font-size: 1.4em;
+    margin-bottom: 20px;
 }
 
 .card p {
-    line-height: 1.6;
+    line-height: 1.7;
+    margin-bottom: 10px;
 }
 
 .card ul {
@@ -74,60 +100,77 @@ h1 {
 }
 
 .card li {
-    padding: 8px 0;
-    border-bottom: 1px solid #f0f0f0;
-}
-
-.card li:last-child {
-    border-bottom: none;
+    padding: 10px 0;
 }
 
 .card li strong {
-    color: #555;
+    color: #495057;
+    font-weight: 500;
 }
 
-.score {
-    display: inline-block;
-    background-color: #ecf0f1;
-    color: #2c3e50;
-    padding: 5px 10px;
-    border-radius: 15px;
-    font-size: 0.9em;
-    margin-right: 10px;
-    margin-bottom: 10px;
-}
-
-/* New layout for Walk / Transit / Bike score boxes */
 .score-grid {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 15px;
-    margin-bottom: 15px;
-    flex-wrap: wrap;
+    margin-bottom: 20px;
 }
 
 .score-box {
-    flex: 1 1 120px;
-    background: #f5f9fc;
-    border: 2px solid #d6e8f5;
+    background: #f8f9fa;
     border-radius: 10px;
-    padding: 12px 14px;
+    padding: 15px;
     text-align: center;
-    min-width: 140px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
 
 .score-box strong {
     display: block;
-    font-size: 0.85rem;
-    letter-spacing: .5px;
-    color: #2c3e50;
-    margin-bottom: 4px;
+    font-size: 0.9rem;
+    color: #6c757d;
+    margin-bottom: 8px;
     text-transform: uppercase;
+    font-weight: 600;
 }
 
 .score-value {
-    font-size: 1.6rem;
+    font-size: 2rem;
     font-weight: 700;
-    color: #1d6fa5;
+    color: var(--primary-color);
     line-height: 1;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+th, td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid var(--card-border-color);
+}
+
+thead th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    color: #495057;
+}
+
+tbody tr:last-child td {
+    border-bottom: none;
+}
+
+tbody tr:hover {
+    background-color: #f1f3f5;
+}
+
+a {
+    color: var(--primary-color);
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+a:hover {
+    color: var(--primary-color-hover);
+    text-decoration: underline;
 }

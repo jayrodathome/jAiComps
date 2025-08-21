@@ -1,5 +1,7 @@
 // --- Helper functions for creating HTML elements ---
- 
+
+let usePlacesAPI = false;
+
 /**
  * Creates a standard card element with a title.
  * @param {string} title - The title to display in an <h2> tag.
@@ -25,6 +27,49 @@ const formatNamedList = (items) => {
   if (!items || items.length === 0) return 'N/A';
   return items.map(item => `${item.name} (${item.distance_mi} mi)`).join(', ');
 };
+
+async function getPlaceDetails(placeName, address, button) {
+  button.disabled = true;
+  button.textContent = 'Loading...';
+
+  try {
+    const response = await fetch('/api/getPlaceDetails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ placeName, address }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server error! Status: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    const table = document.createElement('table');
+    table.innerHTML = `
+      <tr>
+        <th>Distance</th>
+        <th>Duration</th>
+        <th>Direction</th>
+        <th>Google Maps</th>
+      </tr>
+      <tr>
+        <td>${data.distance}</td>
+        <td>${data.duration}</td>
+        <td>${data.direction}</td>
+        <td><a href="${data.url}" target="_blank">View on Google Maps</a></td>
+      </tr>
+    `;
+
+    button.parentNode.replaceChild(table, button);
+
+  } catch (error) {
+    console.error('Fetch error:', error);
+    button.textContent = 'Error';
+  }
+}
 
 /**
  * Renders all property data into the container.
@@ -109,17 +154,75 @@ const renderPropertyData = (container, data) => {
     for (const [level, details] of Object.entries(schoolLevels)) {
       const li = document.createElement('li');
       li.innerHTML = `<strong>${level}:</strong> ${details.name} (${details.distance_mi} mi)`;
+      if (usePlacesAPI) {
+        const button = document.createElement('button');
+        button.textContent = 'Get Details';
+        button.addEventListener('click', () => getPlaceDetails(details.name, data.address, button));
+        li.appendChild(button);
+      }
       ul.appendChild(li);
     }
     return [ul];
   }, data.schools);
 
   renderSection('Crime', (d) => {
-    const context = document.createElement('p');
-    context.textContent = d.context;
-    const trend = document.createElement('p');
-    trend.innerHTML = `<em>${d.trend}</em>`;
-    return [context, trend];
+    const elements = [];
+    if (d.context) {
+      const context = document.createElement('p');
+      context.textContent = d.context;
+      elements.push(context);
+    }
+    if (d.trend) {
+      const trend = document.createElement('p');
+      trend.innerHTML = `<em>${d.trend}</em>`;
+      elements.push(trend);
+    }
+    if (d.stats) {
+      if (d.stats.note) {
+        const note = document.createElement('p');
+        note.innerHTML = `<em>${d.stats.note}</em>`;
+        elements.push(note);
+      } else {
+        const heading = document.createElement('p');
+        const loc = d.stats.level === 'city' && d.stats.city ? `${d.stats.city}, ${d.stats.state}` : d.stats.state;
+        heading.innerHTML = `<strong>FBI Crime Data (${loc} – ${d.stats.year})</strong>`;
+        if (d.stats.level === 'city' && d.stats.note) {
+          const note = document.createElement('p');
+          note.innerHTML = `<em>${d.stats.note}</em>`;
+          elements.push(note);
+        }
+        elements.push(heading);
+        const table = document.createElement('table');
+        table.className = 'crime-table';
+        const rows = [
+          ['Violent Crime', d.stats.violent_crime, d.stats.violent_rate_per_100k],
+          ['  Homicide', d.stats.homicide, null],
+          ['  Robbery', d.stats.robbery, null],
+          ['  Aggravated Assault', d.stats.aggravated_assault, null],
+          ['Property Crime', d.stats.property_crime, d.stats.property_rate_per_100k],
+          ['  Burglary', d.stats.burglary, d.stats.burglary_rate_per_100k],
+            ['  Larceny', d.stats.larceny, d.stats.larceny_rate_per_100k],
+          ['  Motor Vehicle Theft', d.stats.motor_vehicle_theft, d.stats.motor_vehicle_theft_rate_per_100k],
+          ['Arson', d.stats.arson, d.stats.arson_rate_per_100k]
+        ];
+        table.innerHTML = `
+          <thead><tr><th>Offense</th><th>Count</th><th>Rate / 100k</th></tr></thead>
+          <tbody>
+            ${rows.filter(r => r[1] !== undefined && r[1] !== null).map(r => `
+              <tr>
+                <td>${r[0]}</td>
+                <td>${r[1] !== null && r[1] !== undefined ? r[1].toLocaleString() : '—'}</td>
+                <td>${r[2] !== null && r[2] !== undefined ? r[2] : '—'}</td>
+              </tr>`).join('')}
+          </tbody>`;
+        elements.push(table);
+        const src = document.createElement('p');
+        src.className = 'data-source';
+        src.innerHTML = `<small>Source: FBI Crime Data Explorer (api.usa.gov) – State-level estimates. Rates computed per 100k population.</small>`;
+        elements.push(src);
+      }
+    }
+    return elements;
   }, data.crime);
 
   renderSection('Broadband', (d) => {
@@ -153,6 +256,11 @@ const main = () => {
   const input = document.getElementById('address-input');
   const button = form.querySelector('button');
   const container = document.getElementById('property-list');
+  const usePlacesApiCheckbox = document.getElementById('use-places-api');
+
+  usePlacesApiCheckbox.addEventListener('change', () => {
+    usePlacesAPI = usePlacesApiCheckbox.checked;
+  });
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault(); // Prevent the form from reloading the page

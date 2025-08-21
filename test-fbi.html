@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>FBI API Key Test</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    pre { background:#111; color:#0f0; padding:1rem; overflow:auto; }
+    form { display:flex; gap:.5rem; margin-bottom:1rem; }
+    input { flex:1; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>FBI Crime API Key Test</h1>
+    <p>Enter a two-letter state code to test your configured FBI API key against the estimates endpoint.</p>
+    <form id="state-form">
+      <input id="state-input" placeholder="State (e.g. WA)" maxlength="2" />
+      <button type="submit">Test Key</button>
+    </form>
+    <div id="result"></div>
+  </main>
+  <script>
+    const form = document.getElementById('state-form');
+    const input = document.getElementById('state-input');
+    const result = document.getElementById('result');
+    form.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const state = (input.value||'WA').toUpperCase();
+      result.innerHTML = '<p>Testing...</p>';
+      try {
+        const r = await fetch(`/api/testFbiKey?state=${encodeURIComponent(state)}`);
+        const data = await r.json();
+        result.innerHTML = `<h2>${data.overall_ok ? 'SUCCESS' : 'FAIL'} – ${data.winner? data.winner.variant : 'no variant succeeded'}</h2>` +
+          (data.note? `<p style='color:orange;'>${data.note}</p>`:'') +
+          `<h3>Attempts</h3>` +
+          `<pre>${JSON.stringify(data.attempts, null, 2)}</pre>` +
+          (data.winner? `<h3>Winner</h3><pre>${JSON.stringify(data.winner, null, 2)}</pre>`:'');
+      } catch (err) {
+        result.innerHTML = `<p style='color:red;'>${err.message}</p>`;
+      }
+    });
+  </script>
+</body>
+</html>
