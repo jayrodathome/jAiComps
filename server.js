@@ -1,3 +1,4 @@
+console.log('--- server.js starting ---');
 console.log('[startup] Phase 1: loading core modules');
 const express = require('express');
 const cors = require('cors');
