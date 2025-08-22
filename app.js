@@ -1,7 +1,5 @@
 // --- Helper functions for creating HTML elements ---
 
-let usePlacesAPI = false;
-
 /**
  * Creates a standard card element with a title.
  * @param {string} title - The title to display in an <h2> tag.
@@ -91,13 +89,15 @@ const renderPropertyData = (container, data) => {
 
   // --- Render all sections using the data ---
 
-  renderSection('Address', (d) => {
-    const p = document.createElement('p');
-    p.textContent = d;
-    return [p];
-  }, data.address);
+  if (data.address) {
+    renderSection('Address', (d) => {
+      const p = document.createElement('p');
+      p.textContent = d;
+      return [p];
+    }, data.address);
+  }
 
-  renderSection('Amenities Access', (d) => {
+  if (data.amenities_access) renderSection('Amenities Access', (d) => {
     const scoresDiv = document.createElement('div');
     scoresDiv.className = 'score-grid';
     scoresDiv.innerHTML = `
@@ -119,12 +119,26 @@ const renderPropertyData = (container, data) => {
     for (const [category, items] of Object.entries(amenityCategories)) {
       const li = document.createElement('li');
       li.innerHTML = `<strong>${category}:</strong> ${formatNamedList(items)}`;
+      // Add per-item Get Details buttons for categories likely representing specific places
+      if (Array.isArray(items) && items.length && ['Supermarkets','Pharmacies','Hospitals','Parks'].includes(category)) {
+        const btnWrap = document.createElement('span');
+        btnWrap.style.marginLeft = '6px';
+        items.forEach(item => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = 'Get Details';
+          b.style.marginLeft = '4px';
+          b.addEventListener('click', () => getPlaceDetails(item.name, data.address, b));
+          btnWrap.appendChild(b);
+        });
+        li.appendChild(btnWrap);
+      }
       ul.appendChild(li);
     }
     return [scoresDiv, ul];
   }, data.amenities_access);
 
-  renderSection('Commute', (d) => {
+  if (data.commute) renderSection('Commute', (d) => {
     const transit = d.transit || {};
     const busAccess = document.createElement('p');
     busAccess.innerHTML = `<strong>Bus Access:</strong> ${transit.bus_access || 'N/A'}`;
@@ -148,24 +162,22 @@ const renderPropertyData = (container, data) => {
     return [busAccess, majorRoutes, ul];
   }, data.commute);
 
-  renderSection('Schools', (d) => {
+  if (data.schools) renderSection('Schools', (d) => {
     const ul = document.createElement('ul');
     const schoolLevels = { "Elementary": d.elementary, "Middle": d.middle, "High": d.high };
     for (const [level, details] of Object.entries(schoolLevels)) {
       const li = document.createElement('li');
       li.innerHTML = `<strong>${level}:</strong> ${details.name} (${details.distance_mi} mi)`;
-      if (usePlacesAPI) {
-        const button = document.createElement('button');
-        button.textContent = 'Get Details';
-        button.addEventListener('click', () => getPlaceDetails(details.name, data.address, button));
-        li.appendChild(button);
-      }
+      const button = document.createElement('button');
+      button.textContent = 'Get Details';
+      button.addEventListener('click', () => getPlaceDetails(details.name, data.address, button));
+      li.appendChild(button);
       ul.appendChild(li);
     }
     return [ul];
   }, data.schools);
 
-  renderSection('Crime', (d) => {
+  if (data.crime) renderSection('Crime', (d) => {
     const elements = [];
     if (d.context) {
       const context = document.createElement('p');
@@ -225,7 +237,7 @@ const renderPropertyData = (container, data) => {
     return elements;
   }, data.crime);
 
-  renderSection('Broadband', (d) => {
+  if (data.broadband) renderSection('Broadband', (d) => {
     const ul = document.createElement('ul');
     ul.innerHTML = `
       <li><strong>Cable:</strong> ${d.cable.provider} (Up to ${d.cable.max_speed_mbps} Mbps, ${d.cable.coverage_percent}% coverage)</li>
@@ -237,7 +249,7 @@ const renderPropertyData = (container, data) => {
     return [ul, notes];
   }, data.broadband);
 
-  renderSection('Environmental Risk', (d) => {
+  if (data.environmental_risk) renderSection('Environmental Risk', (d) => {
     const ul = document.createElement('ul');
     ul.innerHTML = `
       <li><strong>Flood Risk:</strong> ${d.flood_risk}</li>
@@ -246,6 +258,105 @@ const renderPropertyData = (container, data) => {
       <li><strong>Air Quality:</strong> ${d.air_quality}</li>`;
     return [ul];
   }, data.environmental_risk);
+
+  if (data.property_value) {
+    renderSection('Surrounding Area Values', (d) => {
+      const card = document.createElement('div');
+      card.className = 'pv-card';
+      // Hero
+      const hero = document.createElement('div'); hero.className='pv-hero';
+      hero.innerHTML = `<div class="pv-value">${d.zhvi ? ('$'+d.zhvi.toLocaleString()) : '—'}</div><div class="pv-label">Median Home Value (ZHVI)</div>`;
+      // Stats grid
+      const stats = document.createElement('div'); stats.className='pv-stats';
+      const addStat=(label,value,customEl)=>{ const s=document.createElement('div'); s.className='pv-stat'; s.innerHTML=`<div class="label">${label}</div>`; if(customEl){ s.appendChild(customEl); } else { const v=document.createElement('div'); v.className='value'; v.textContent = value ?? '—'; s.appendChild(v); } stats.appendChild(s); };
+      // Region (dropdown if options available)
+      if (Array.isArray(d.region_options) && d.region_options.length > 1) {
+        const select = document.createElement('select'); select.style.fontSize='12px'; select.style.padding='2px 4px'; select.style.border='1px solid #e2e8f0'; select.style.borderRadius='4px';
+        d.region_options.forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; if(opt===d.region) o.selected=true; select.appendChild(o); });
+        select.addEventListener('change', async ()=>{
+          const chosen = select.value; select.disabled=true;
+          try {
+            const r = await fetch('/api/regionValues',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ region: chosen }) });
+            if(!r.ok) throw new Error('Region fetch failed');
+            const regionData = await r.json();
+            // Merge minimal regionData into original d then re-render only this card (simple approach: re-run entire renderPropertyData)
+            const currentFull = { ...data, property_value: { ...data.property_value, ...regionData, region_options: d.region_options } };
+            renderPropertyData(container, currentFull);
+          } catch(e){ console.error(e); select.style.borderColor='red'; }
+          finally { select.disabled=false; }
+        });
+        addStat('Region', null, select);
+      } else {
+        addStat('Region', d.region || d.zip || '—');
+      }
+      addStat('Latest Data', d.latest_month || '—');
+      addStat('Level', d.type ? d.type.toUpperCase() : '—');
+      if (d.distance_miles) addStat('Distance to Metro', `${d.distance_miles} mi`);
+      if (d.price_per_sqft && d.price_per_sqft.value) addStat('Price / SqFt', '$'+d.price_per_sqft.value.toLocaleString(undefined,{maximumFractionDigits:0}));
+      const chartDiv = document.createElement('div'); chartDiv.id = 'propertyValueChart'; chartDiv.className='pv-chart';
+      // Chart mode toggle if PPSF present
+      let chartMode = 'value';
+      let modeToggle = null;
+      if (d.price_per_sqft && d.price_per_sqft.series) {
+        modeToggle = document.createElement('div');
+        modeToggle.style.display='flex'; modeToggle.style.justifyContent='flex-end'; modeToggle.style.gap='6px'; modeToggle.style.marginBottom='4px';
+        ['value','ppsf'].forEach(m=>{ const btn=document.createElement('button'); btn.type='button'; btn.textContent= m==='value' ? 'Median Value' : 'Price / SqFt'; btn.style.padding='4px 10px'; btn.style.fontSize='11px'; btn.style.borderRadius='14px'; btn.style.border='1px solid #e2e8f0'; btn.style.background= m===chartMode ? '#4f46e5' : 'transparent'; btn.style.color= m===chartMode ? '#fff' : '#334155'; btn.addEventListener('click',()=>{ chartMode=m; Array.from(modeToggle.children).forEach(c=>{ c.style.background='transparent'; c.style.color='#334155'; }); btn.style.background='#4f46e5'; btn.style.color='#fff'; renderChart(); }); modeToggle.appendChild(btn); });
+        card.appendChild(modeToggle);
+      }
+      const footer = document.createElement('div'); footer.className='pv-footer';
+      const sourceSpan = document.createElement('span'); sourceSpan.textContent = 'Source: Zillow Home Value Index'; footer.appendChild(sourceSpan);
+      const refreshBtn = document.createElement('button'); refreshBtn.textContent='Refresh Dataset'; footer.appendChild(refreshBtn);
+      const ts = d.dataset_downloaded_at || d.dataset_loaded_at; if (ts) { const dt=new Date(ts); const meta=document.createElement('span'); meta.style.marginLeft='8px'; meta.className='pv-tooltip-inline'; meta.textContent = `Downloaded ${dt.toLocaleDateString()}`; footer.insertBefore(meta, refreshBtn); }
+      refreshBtn.addEventListener('click', async () => {
+        refreshBtn.disabled = true; const original=refreshBtn.textContent; refreshBtn.textContent='Refreshing...';
+        try { const r=await fetch('/api/refreshZillow',{method:'POST'}); if(!r.ok) throw new Error('Refresh failed'); await r.json(); const input=document.getElementById('address-input'); if(input && input.value.trim()) document.querySelector('#address-form button').click(); else refreshBtn.textContent='Refreshed'; }
+        catch(e){ console.error(e); refreshBtn.textContent='Error'; }
+        finally { setTimeout(()=>{ refreshBtn.disabled=false; refreshBtn.textContent=original; },3000); }
+      });
+      card.appendChild(hero); card.appendChild(stats); card.appendChild(chartDiv); card.appendChild(footer);
+
+      // Build yearly series for chart
+      function renderChart() {
+        if (!(d.yearly && d.yearly.length > 1 && window.ApexCharts)) return;
+        let categories, values, label;
+        if (chartMode==='ppsf' && d.price_per_sqft && d.price_per_sqft.series) {
+          const series = d.price_per_sqft.series;
+          categories = series.map(p=>p.ym);
+          values = series.map(p=>p.value);
+          label = 'Price / SqFt';
+        } else {
+          const useMonthly = d.series && d.series.length > 2;
+          if (useMonthly) { categories = d.series.map(p=>p.ym); values = d.series.map(p=>p.value); }
+          else { categories = d.yearly.map(r=>r.year); values = d.yearly.map(r=>r.zhvi); }
+          label = 'Median Value';
+        }
+        const options = {
+          series:[{ name: label, data: values }],
+          chart:{ type:'area', height:260, toolbar:{show:false}, zoom:{enabled:false}, animations:{enabled:true} },
+          stroke:{ curve:'smooth', width:2.5 },
+          dataLabels:{ enabled:false },
+          // Force x-axis to show only the 4-digit year (e.g. 2025) regardless of monthly or yearly category values.
+          xaxis:{ type:'category', categories, tickAmount: Math.min(10, Math.max(3, Math.floor(categories.length/3))), labels:{ rotate:0, style:{ colors:'#64748b', fontSize:'11px' }, formatter:(val)=>{ if(val===undefined||val===null) return ''; const s=val.toString(); // expect formats YYYY or YYYY-MM
+              if(/^\d{4}-\d{2}$/.test(s)) return s.slice(0,4); if(/^\d{4}$/.test(s)) return s; // fallback: first 4 digits
+              const m = s.match(/(19|20)\d{2}/); return m?m[0]:s; } }, axisBorder:{show:false}, axisTicks:{show:false} },
+          yaxis:{ labels:{ style:{ colors:'#64748b', fontSize:'12px' }, formatter:(v)=>'$'+(v>=1_000_000?(v/1_000_000).toFixed(1)+'M':(v/1000).toFixed(0)+'K') } },
+          grid:{ borderColor:'#f1f5f9', strokeDashArray:4 },
+          tooltip:{ y:{ formatter:(val)=>'$'+val.toLocaleString() } },
+          fill:{ type:'gradient', gradient:{ shadeIntensity:1, opacityFrom:0.35, opacityTo:0.05, stops:[0,100] } },
+          markers:{ size:0, hover:{size:5} },
+          colors:['#4f46e5']
+        };
+        chartDiv.innerHTML='';
+        try { const chart=new ApexCharts(chartDiv, options); chart.render(); } catch(e){ console.warn('ApexCharts render failed', e); }
+      }
+      setTimeout(renderChart,0);
+      if (!window.ApexCharts) {
+        console.warn('ApexCharts library not loaded when attempting to render property value chart.');
+      }
+      if (d.note) { const note=document.createElement('div'); note.className='pv-tooltip-inline'; note.textContent=d.note; card.appendChild(note); }
+      return [card];
+    }, data.property_value);
+  }
 };
 
 /**
@@ -256,16 +367,15 @@ const main = () => {
   const input = document.getElementById('address-input');
   const button = form.querySelector('button');
   const container = document.getElementById('property-list');
-  const usePlacesApiCheckbox = document.getElementById('use-places-api');
-
-  usePlacesApiCheckbox.addEventListener('change', () => {
-    usePlacesAPI = usePlacesApiCheckbox.checked;
-  });
+  // Google Places details now always available; no toggle checkbox.
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault(); // Prevent the form from reloading the page
     const address = input.value.trim();
     if (!address) return;
+
+    // Collect selected section checkboxes
+    const selected = Array.from(form.querySelectorAll('input[name="sections"]:checked')).map(c=>c.value);
 
     // Disable the button and show a loading state
     button.disabled = true;
@@ -285,7 +395,7 @@ const main = () => {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ address: address }),
+          body: JSON.stringify({ address: address, sections: selected }),
           signal: controller.signal,
         });
       } finally {

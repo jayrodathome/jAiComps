@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const os = require('os');
+const fs = require('fs');
+const path = require('path');
 const config = require('./config'); // Configuration (loads env)
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { Client } = require("@googlemaps/google-maps-services-js");
@@ -12,10 +14,267 @@ const mapsClient = new Client({});
 const app = express();
 const port = process.env.PORT || 3000; // Allow overriding port
 const host = process.env.HOST || '0.0.0.0'; // Bind to all interfaces for LAN access
+const DATA_DIR = path.join(__dirname, 'data');
 
 // Simple in-memory cache { address: { data, expiresAt } }
 const CACHE_TTL = (parseInt(process.env.CACHE_TTL_SECONDS, 10) || 900) * 1000; // default 15m
 const cache = new Map();
+
+// Zillow (or similar) property value dataset cache (zip -> {date, value})
+let zillowValues = null; // ZHVI
+let zillowPpsf = null; // price per sqft (metro-level)
+let zillowDownloadTimestamp = null; // tracks last time any Zillow file was downloaded into data folder
+
+// Support loading either local file system path or remote HTTP(S) URL
+// Basic CSV line parser supporting quoted fields and escaped quotes
+function parseCsvLine(line) {
+  const out = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i+1] === '"') { // escaped quote
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+async function loadZillowWideCSV(filePath) {
+  try {
+    let text;
+    let origin;
+    if (/^https?:\/\//i.test(filePath)) {
+      const resp = await fetch(filePath);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      text = await resp.text();
+      origin = filePath;
+    } else {
+      const abs = path.resolve(filePath);
+      text = fs.readFileSync(abs, 'utf8');
+      origin = abs;
+    }
+    const lines = text.split(/\r?\n/).filter(l => l.trim().length);
+    if (!lines.length) return;
+  const header = parseCsvLine(lines[0]);
+    // Identify date columns (YYYY-MM or YYYY-MM-DD). We'll store YYYY-MM for display.
+    const dateCols = header
+      .map((h,i)=> (/^(19|20)\d{2}-\d{2}(-\d{2})?$/.test(h.trim()) ? {col:i, raw:h.trim(), ym:h.trim().slice(0,7)} : null))
+      .filter(Boolean);
+    if (!dateCols.length) {
+      console.warn('Zillow CSV: no date columns detected. Header length:', header.length);
+      return;
+    }
+    const regionNameIdx = header.findIndex(h=>/RegionName/i.test(h));
+    const regionTypeIdx = header.findIndex(h=>/RegionType/i.test(h));
+    const stateIdx = header.findIndex(h=>/^State$/i.test(h)||/StateName/i.test(h));
+    if (regionNameIdx === -1 || regionTypeIdx === -1) {
+      console.warn('Zillow CSV missing RegionName or RegionType columns');
+      return;
+    }
+    const zipMap = new Map();
+    const msaMap = new Map(); // "City, ST" -> { date, value }
+    for (let li=1; li<lines.length; li++) {
+      const row = parseCsvLine(lines[li]);
+      if (row.length < header.length) continue;
+      const regionName = row[regionNameIdx]?.trim();
+      const regionType = (row[regionTypeIdx] || '').trim().toLowerCase();
+      if (!regionName) continue;
+      if (regionType !== 'zip' && regionType !== 'msa') continue;
+      const series = [];
+      let latest = null;
+      for (let di=0; di<dateCols.length; di++) {
+        const {col, ym} = dateCols[di];
+        const valStr = row[col];
+        if (valStr && !isNaN(+valStr)) {
+          const v = +valStr;
+            series.push({ ym, value: v });
+          latest = { ym, value: v };
+        }
+      }
+      if (!latest) continue;
+      const entry = { date: latest.ym, value: latest.value, state: stateIdx>=0 ? row[stateIdx].trim() : undefined, series };
+      if (regionType === 'zip') zipMap.set(regionName, entry);
+      else if (regionType === 'msa') msaMap.set(regionName.toUpperCase(), entry);
+    }
+    // If we're parsing the locally cached file name, attempt to set download timestamp from its mtime (persisted across restarts)
+    if (!zillowDownloadTimestamp) {
+      try {
+        if (!/^https?:/i.test(filePath) && /zillow_latest\.csv$/i.test(filePath)) {
+          const st = fs.statSync(filePath);
+          zillowDownloadTimestamp = st.mtime;
+        }
+      } catch {}
+    }
+    zillowValues = { loadedAt: new Date(), zipCount: zipMap.size, msaCount: msaMap.size, zipMap, msaMap };
+    console.log(`Loaded Zillow dataset from ${origin} -> ZIPs: ${zipMap.size}, MSAs: ${msaMap.size}`);
+  } catch (e) {
+    console.warn('Failed to load Zillow CSV:', e.message);
+  }
+}
+
+// Load Metro-level price per square foot CSV (no ZIPs). Returns map: MSA KEY -> {date,value,series}
+async function loadZillowPricePerSqftCSV(filePath) {
+  try {
+    let text; let origin;
+    if (/^https?:\/\//i.test(filePath)) { const resp = await fetch(filePath); if (!resp.ok) throw new Error(`HTTP ${resp.status}`); text = await resp.text(); origin = filePath; }
+    else { const abs = path.resolve(filePath); text = fs.readFileSync(abs,'utf8'); origin = abs; }
+    const lines = text.split(/\r?\n/).filter(l=>l.trim().length);
+    if (!lines.length) return;
+    const header = parseCsvLine(lines[0]);
+    const dateCols = header.map((h,i)=> (/^(19|20)\d{2}-\d{2}(-\d{2})?$/.test(h.trim()) ? {col:i, ym:h.trim().slice(0,7)}:null)).filter(Boolean);
+    const regionNameIdx = header.findIndex(h=>/RegionName/i.test(h));
+    const regionTypeIdx = header.findIndex(h=>/RegionType/i.test(h));
+    if (regionNameIdx === -1 || regionTypeIdx === -1) { console.warn('PPSF CSV missing RegionName/RegionType'); return; }
+    const msaMap = new Map();
+    for (let li=1; li<lines.length; li++) {
+      const row = parseCsvLine(lines[li]);
+      if (row.length < header.length) continue;
+      const regionName = row[regionNameIdx]?.trim();
+      const regionType = (row[regionTypeIdx]||'').trim().toLowerCase();
+      if (!regionName || regionType !== 'msa') continue;
+      const series=[]; let latest=null;
+      for (let di=0; di<dateCols.length; di++) { const {col, ym} = dateCols[di]; const valStr=row[col]; if (valStr && !isNaN(+valStr)) { const v=+valStr; series.push({ym,value:v}); latest={ym,value:v}; } }
+      if (!latest) continue;
+      msaMap.set(regionName.toUpperCase(), { date: latest.ym, value: latest.value, series });
+    }
+    zillowPpsf = { loadedAt: new Date(), msaCount: msaMap.size, msaMap };
+    console.log(`Loaded Zillow PPSF dataset from ${origin} -> MSAs: ${msaMap.size}`);
+  } catch(e){ console.warn('Failed to load Zillow PPSF CSV:', e.message); }
+}
+
+async function ensurePpsfLoaded() {
+  if (!zillowPpsf && config.zillowDatasets && config.zillowDatasets.pricePerSqft) {
+    await loadZillowPricePerSqftCSV(config.zillowDatasets.pricePerSqft);
+  }
+}
+
+function findMsaKeyForAddress(address, msaMap) {
+  if (!address || !msaMap || !msaMap.size) return null;
+  let city = null, state = null;
+  const cityStateMatch = address.match(/([^,]+),\s*([A-Z]{2})\s+\d{5}/i);
+  if (cityStateMatch) {
+    city = cityStateMatch[1].trim();
+    state = cityStateMatch[2].toUpperCase();
+  } else {
+    const parts = address.split(',').map(p=>p.trim());
+    if (parts.length >= 2) {
+      city = parts[parts.length-2];
+      const stMatch = parts[parts.length-1].match(/\b([A-Z]{2})\b/);
+      if (stMatch) state = stMatch[1].toUpperCase();
+    }
+  }
+  if (!city || !state) return null;
+  const targetCityUpper = city.toUpperCase();
+  const targetStateUpper = state.toUpperCase();
+  const directKey = `${targetCityUpper}, ${targetStateUpper}`;
+  if (msaMap.has(directKey)) return directKey;
+  // Partial startsWith
+  let bestKey = null;
+  for (const key of msaMap.keys()) {
+    if (key.endsWith(`, ${targetStateUpper}`)) {
+      const cityPart = key.split(',')[0];
+      if (cityPart.startsWith(targetCityUpper)) { bestKey = key; break; }
+    }
+  }
+  if (bestKey) return bestKey;
+  // Fuzzy
+  const levenshtein = (a,b)=>{ const m=[...Array(b.length+1)].map((_,i)=>i); for(let i=1;i<=a.length;i++){ let prev=i-1; m[0]=i; for(let j=1;j<=b.length;j++){ const tmp=m[j]; m[j]=a[i-1]===b[j-1]?prev:Math.min(prev,m[j-1],m[j])+1; prev=tmp;} } return m[b.length]; };
+  let bestDist = Infinity; let best = null;
+  for (const key of msaMap.keys()) {
+    if (!key.endsWith(`, ${targetStateUpper}`)) continue;
+    const cityPart = key.split(',')[0];
+    const dist = levenshtein(cityPart, targetCityUpper);
+    if (dist < bestDist) { bestDist = dist; best = key; }
+  }
+  if (bestDist <= 3) return best;
+  return null;
+}
+
+async function ensureZillowLoaded() {
+  if (zillowValues || !process.env.ZILLOW_ZIP_ZHVI_CSV) return;
+  await loadZillowWideCSV(process.env.ZILLOW_ZIP_ZHVI_CSV);
+}
+
+/**
+ * Download latest Zillow CSV referenced by env variable into data folder and reload.
+ */
+async function refreshZillowDataset() {
+  // Determine primary ZHVI source (env override or config default)
+  const zhviSrc = process.env.ZILLOW_ZIP_ZHVI_CSV || config.zillowDatasets.zhviWide;
+  const ppsfSrc = config.zillowDatasets.pricePerSqft;
+  if (!zhviSrc) throw new Error('No ZHVI dataset URL configured');
+  // Local path case for ZHVI only; PPSF still remote
+  if (!/^https?:\/\//i.test(zhviSrc)) {
+    await loadZillowWideCSV(zhviSrc);
+    if (ppsfSrc) await loadZillowPricePerSqftCSV(ppsfSrc); // remote
+    return { mode: 'reload-local', zhvi_source: zhviSrc, ppsf_source: ppsfSrc, zhvi: zillowValues, ppsf: zillowPpsf };
+  }
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+  const ts = Date.now();
+  const zhviName = 'zillow_latest.csv';
+  const ppsfName = 'zillow_ppsf_latest.csv';
+  const zhviTarget = path.join(DATA_DIR, zhviName);
+  const ppsfTarget = path.join(DATA_DIR, ppsfName);
+  // Download both (parallel)
+  const [zhviResp, ppsfResp] = await Promise.all([
+    fetch(zhviSrc),
+    ppsfSrc ? fetch(ppsfSrc) : Promise.resolve(null)
+  ]);
+  if (!zhviResp.ok) throw new Error(`ZHVI download failed: HTTP ${zhviResp.status}`);
+  if (ppsfResp && !ppsfResp.ok) console.warn('PPSF download failed:', ppsfResp.status);
+  fs.writeFileSync(zhviTarget, Buffer.from(await zhviResp.arrayBuffer()));
+  if (ppsfResp && ppsfResp.ok) fs.writeFileSync(ppsfTarget, Buffer.from(await ppsfResp.arrayBuffer()));
+  zillowDownloadTimestamp = new Date();
+  await loadZillowWideCSV(zhviTarget);
+  if (ppsfResp && ppsfResp.ok) await loadZillowPricePerSqftCSV(ppsfTarget);
+  return { mode: 'downloaded', zhvi_saved_as: zhviTarget, ppsf_saved_as: ppsfResp?.ok ? ppsfTarget : null, zhvi_source: zhviSrc, ppsf_source: ppsfSrc, downloaded_at: zillowDownloadTimestamp, zhvi: zillowValues, ppsf: zillowPpsf };
+}
+
+// ---------------- Geocoding & Metro distance helpers ---------------- //
+const geocodeCache = new Map(); // key -> {lat,lng}
+async function geocode(query) {
+  if (!config.googleApiKey) return null;
+  const k = query.toLowerCase();
+  if (geocodeCache.has(k)) return geocodeCache.get(k);
+  try {
+    const resp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${config.googleApiKey}`);
+    if (!resp.ok) return null;
+    const j = await resp.json();
+    const loc = j.results?.[0]?.geometry?.location || null;
+    if (loc) geocodeCache.set(k, loc);
+    return loc;
+  } catch { return null; }
+}
+
+function haversineMiles(a, b) {
+  if (!a || !b) return Infinity;
+  const R = 3958.8; // miles
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const la1 = toRad(a.lat);
+  const la2 = toRad(b.lat);
+  const h = Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function extractZip(address) {
+  if (!address) return null;
+  const m = address.match(/\b(\d{5})(?:-\d{4})?\b/);
+  return m ? m[1] : null;
+}
 
 // Enable CORS so our front-end (running on a different port) can call this server
 app.use(cors());
@@ -343,22 +602,216 @@ function normalizePropertyData(data) {
 app.post('/api/getPropertyDetails', async (req, res) => {
   const start = Date.now();
   try {
-    const { address } = req.body || {};
+    const { address, sections } = req.body || {};
     if (!address || typeof address !== 'string') {
       return res.status(400).json({ error: 'Invalid or missing address.' });
     }
 
-    // Cache lookup
-    const cached = cache.get(address.toLowerCase());
+    // Normalize requested sections (lowercase). If none provided, treat as ALL (legacy behavior)
+    let requested = null; // null => all
+    if (Array.isArray(sections) && sections.length) {
+      requested = Array.from(new Set(sections.map(s => String(s).toLowerCase())));
+    }
+    const wants = (k) => !requested || requested.includes(k);
+    const AI_SECTIONS = new Set(['address','amenities_access','commute','schools','broadband','environmental_risk']);
+    const needAI = !requested || requested.some(s => AI_SECTIONS.has(s));
+
+    // Build cache key factoring in selected sections
+    const cacheKey = address.toLowerCase() + '|' + (requested ? requested.sort().join(',') : 'ALL');
+
+    // Cache lookup (only if full result or exact requested set cached)
+    const cached = cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       return res.json({ ...cached.data, _cached: true });
     }
 
-    let propertyData = await getPropertyDetailsFromGemini(address);
-    const crimeData = await getCrimeData(address);
-    propertyData.crime = { ...propertyData.crime, ...crimeData };
-    propertyData = normalizePropertyData(propertyData);
-    cache.set(address.toLowerCase(), { data: propertyData, expiresAt: Date.now() + CACHE_TTL });
+    let propertyData = { address };
+    if (needAI) {
+      const aiData = await getPropertyDetailsFromGemini(address);
+      propertyData = { ...aiData };
+    }
+
+    // Crime (only if requested)
+    if (wants('crime')) {
+      const crimeData = await getCrimeData(address);
+      propertyData.crime = { ...(propertyData.crime || {}), ...crimeData };
+    }
+    // Property value enrichment (ZIP preferred, fallback to Metro/MSA)
+    if (wants('property_value')) {
+      await ensureZillowLoaded();
+      await ensurePpsfLoaded();
+      if (zillowValues && (zillowValues.zipMap || zillowValues.msaMap)) {
+        const zip = extractZip(address);
+        let pv = null;
+        if (zip && zillowValues.zipMap?.has(zip)) {
+          pv = { type: 'zip', key: zip, ...zillowValues.zipMap.get(zip) };
+        } else {
+        // Try to derive "City, ST" for MSA match
+        const cityStateMatch = address.match(/([^,]+),\s*([A-Z]{2})\s+\d{5}/i);
+        if (cityStateMatch) {
+          const city = cityStateMatch[1].trim();
+          const st = cityStateMatch[2].toUpperCase();
+          const msaKey = `${city}, ${st}`.toUpperCase();
+          if (zillowValues.msaMap?.has(msaKey)) {
+            pv = { type: 'msa', key: msaKey, ...zillowValues.msaMap.get(msaKey) };
+          }
+        }
+
+      // If still no pv, attempt smarter inference: geocode & nearest metro (state constrained) else fuzzy match
+            if (!pv && zillowValues.msaMap && zillowValues.msaMap.size) {
+              let inferredCity = null; let inferredState = null;
+              // 1. Geocode if Google key present
+              if (config.googleApiKey) {
+                try {
+                  const geoResp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${config.googleApiKey}`);
+                  if (geoResp.ok) {
+                    const geoJson = await geoResp.json();
+                    const comp = geoJson.results?.[0]?.address_components || [];
+                    const locality = comp.find(c => c.types.includes('locality')) || comp.find(c => c.types.includes('postal_town'));
+                    const admin1 = comp.find(c => c.types.includes('administrative_area_level_1'));
+                    inferredCity = (locality && locality.long_name) || null;
+                    inferredState = (admin1 && admin1.short_name) || null;
+                  }
+                } catch (e) {
+                  console.warn('Geocode for metro inference failed:', e.message);
+                }
+              }
+              // 2. If still missing, fall back to simple regex parse (city before second comma)
+              if (!inferredCity || !inferredState) {
+                const parts = address.split(',').map(p=>p.trim());
+                if (parts.length >= 2) {
+                  inferredCity = inferredCity || parts[parts.length-2];
+                  const stMatch = parts[parts.length-1].match(/\b([A-Z]{2})\b/);
+                  if (stMatch) inferredState = inferredState || stMatch[1];
+                }
+              }
+              if (inferredCity && inferredState) {
+                const targetCityUpper = inferredCity.toUpperCase();
+                const targetStateUpper = inferredState.toUpperCase();
+                // Direct contains / startsWith search first
+                let bestKey = null;
+                for (const key of zillowValues.msaMap.keys()) {
+                  if (key.endsWith(`, ${targetStateUpper}`)) {
+                    const cityPart = key.split(',')[0];
+                    if (cityPart === targetCityUpper) { bestKey = key; break; }
+                    if (!bestKey && cityPart.startsWith(targetCityUpper)) bestKey = key; // partial match
+                  }
+                }
+                // Fuzzy Levenshtein if still none
+                if (!bestKey) {
+                  const levenshtein = (a,b)=>{ const m=[...Array(b.length+1)].map((_,i)=>i); for(let i=1;i<=a.length;i++){ let prev=i-1; m[0]=i; for(let j=1;j<=b.length;j++){ const tmp=m[j]; m[j]=a[i-1]===b[j-1]?prev:Math.min(prev,m[j-1],m[j])+1; prev=tmp;} } return m[b.length]; };
+                  let bestDist = Infinity;
+                  for (const key of zillowValues.msaMap.keys()) {
+                    if (key.endsWith(`, ${targetStateUpper}`)) {
+                      const cityPart = key.split(',')[0];
+                      const dist = levenshtein(cityPart, targetCityUpper);
+                      if (dist < bestDist) { bestDist = dist; bestKey = key; }
+                    }
+                  }
+                  if (bestDist > 3) bestKey = null; // discard poor match
+                }
+                // Nearest metro approach if still none or to refine selection
+                let nearestKey = null; let nearestMiles = Infinity;
+                let addressLoc = null;
+                if (config.googleApiKey) addressLoc = await geocode(address);
+                if (addressLoc) {
+                  const candidates = [];
+                  for (const key of zillowValues.msaMap.keys()) {
+                    if (key.endsWith(`, ${targetStateUpper}`)) candidates.push(key);
+                  }
+                  // Geocode each candidate city center ("City, ST") and compute distance
+                  for (const key of candidates) {
+                    const cityLoc = await geocode(key);
+                    if (!cityLoc) continue;
+                    const miles = haversineMiles(addressLoc, cityLoc);
+                    if (miles < nearestMiles) { nearestMiles = miles; nearestKey = key; }
+                  }
+                }
+                const chosenKey = nearestKey || bestKey;
+                if (chosenKey) {
+                  const entry = zillowValues.msaMap.get(chosenKey);
+                  pv = { type: 'msa', key: chosenKey, ...entry, inferred: true, distance_miles: isFinite(nearestMiles) ? +nearestMiles.toFixed(1) : null };
+                }
+              }
+            }
+        }
+        if (pv) {
+        // Build yearly aggregates from series (last available month per year)
+        let yearly = [];
+        if (pv.series && pv.series.length) {
+          const byYear = new Map();
+          for (const pt of pv.series) {
+            const year = pt.ym.slice(0,4);
+            // overwrite so last month wins
+            byYear.set(year, pt.value);
+          }
+          yearly = Array.from(byYear.entries())
+            .sort((a,b)=>a[0].localeCompare(b[0]))
+            .map(([year, zhvi])=>({ year, zhvi }));
+        }
+        // Region options (other MSAs within same state) to allow user selection of alternate surrounding areas
+        let region_options = null;
+        if (pv.type === 'msa' && zillowValues?.msaMap) {
+          try {
+            const stateCode = (pv.key.split(',').pop() || '').trim();
+            if (stateCode) {
+              region_options = Array.from(zillowValues.msaMap.keys())
+                .filter(k => k.endsWith(`, ${stateCode}`))
+                .sort();
+            }
+          } catch {}
+        }
+        propertyData.property_value = {
+          type: pv.type,
+          region: pv.key,
+          latest_month: pv.date,
+          zhvi: pv.value,
+          source: 'Zillow Home Value Index (local CSV)',
+              note: pv.type === 'msa' ? (pv.inferred ? 'Nearest metro-level median (inferred) – informational only.' : 'Metro-level median (no ZIP match) – informational only.') : 'ZIP-level median – informational only.',
+          dataset_loaded_at: zillowValues.loadedAt ? zillowValues.loadedAt.toISOString() : null,
+          dataset_downloaded_at: zillowDownloadTimestamp ? zillowDownloadTimestamp.toISOString() : null,
+          distance_miles: (pv.distance_miles !== undefined ? pv.distance_miles : null),
+          yearly,
+          series: Array.isArray(pv.series) ? pv.series.slice(-240) : [], // include up to last 20 years monthly for chart fallback
+          region_options
+        };
+        // Attach price per sqft; if we matched a ZIP, derive MSA key independently.
+        if (zillowPpsf && zillowPpsf.msaMap) {
+          let ppsfKey = null;
+            if (pv.type === 'msa') ppsfKey = pv.key.toUpperCase();
+            else ppsfKey = findMsaKeyForAddress(address, zillowPpsf.msaMap);
+          if (ppsfKey && zillowPpsf.msaMap.has(ppsfKey)) {
+            const ppsfEntry = zillowPpsf.msaMap.get(ppsfKey);
+            propertyData.property_value.price_per_sqft = {
+              latest_month: ppsfEntry.date,
+              value: ppsfEntry.value,
+              series: ppsfEntry.series.slice(-240),
+              metro_key: ppsfKey,
+              inferred_from_zip: pv.type === 'zip'
+            };
+          }
+        }
+        } else {
+          propertyData.property_value = { note: 'No matching ZIP or Metro (MSA) in loaded dataset.', dataset_loaded_at: zillowValues.loadedAt ? zillowValues.loadedAt.toISOString() : null, dataset_downloaded_at: zillowDownloadTimestamp ? zillowDownloadTimestamp.toISOString() : null };
+        }
+      } else {
+        propertyData.property_value = { note: 'Zillow dataset not loaded (set ZILLOW_ZIP_ZHVI_CSV in .env).' };
+      }
+    }
+    if (needAI) propertyData = normalizePropertyData(propertyData);
+
+    // If selective return, strip unrequested keys
+    if (requested) {
+      const filtered = {};
+      for (const key of Object.keys(propertyData)) {
+        if (wants(key)) filtered[key] = propertyData[key];
+      }
+      // Always include address if AI generated or requested explicitly
+      if (!filtered.address && wants('address')) filtered.address = address;
+      propertyData = filtered;
+    }
+
+    cache.set(cacheKey, { data: propertyData, expiresAt: Date.now() + CACHE_TTL });
     res.json(propertyData);
   } catch (error) {
     console.error('Error fetching property details:', error);
@@ -475,6 +928,7 @@ app.get('/api/debugEnv', (req, res) => {
     gemini_present: !!config.geminiApiKey,
     google_present: !!config.googleApiKey,
     fbi_present: !!config.fbiApiKey,
+  zillow_csv: process.env.ZILLOW_ZIP_ZHVI_CSV || null,
     fbi_masked: mask(config.fbiApiKey)
   });
 });
@@ -501,4 +955,51 @@ app.listen(port, host, () => {
   console.log(`  FBI_API_KEY: ${mask(config.fbiApiKey)}`);
   console.log(`  GEMINI_API_KEY: ${mask(config.geminiApiKey)}`);
   console.log(`  GOOGLE_API_KEY: ${mask(config.googleApiKey)}`);
+});
+
+// Endpoint to refresh Zillow dataset on-demand
+app.post('/api/refreshZillow', async (req, res) => {
+  try {
+    const result = await refreshZillowDataset();
+    res.json({ ok: true, result });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Return value series for a specific region key (MSA) so frontend can switch regions without re-running AI sections
+app.post('/api/regionValues', async (req, res) => {
+  try {
+    const { region } = req.body || {};
+    if (!region) return res.status(400).json({ error: 'Missing region' });
+    await ensureZillowLoaded();
+    await ensurePpsfLoaded();
+    if (!zillowValues?.msaMap?.has(region.toUpperCase())) {
+      return res.status(404).json({ error: 'Region not found' });
+    }
+    const entry = zillowValues.msaMap.get(region.toUpperCase());
+    // Build yearly
+    let yearly = [];
+    if (entry.series && entry.series.length) {
+      const byYear = new Map();
+      for (const pt of entry.series) { byYear.set(pt.ym.slice(0,4), pt.value); }
+      yearly = Array.from(byYear.entries()).sort((a,b)=>a[0].localeCompare(b[0])).map(([year, zhvi])=>({year, zhvi}));
+    }
+    const resp = {
+      type: 'msa',
+      region: region.toUpperCase(),
+      latest_month: entry.date,
+      zhvi: entry.value,
+      yearly,
+      series: entry.series.slice(-240)
+    };
+    // attach PPSF if available
+    if (zillowPpsf?.msaMap?.has(region.toUpperCase())) {
+      const ppsfEntry = zillowPpsf.msaMap.get(region.toUpperCase());
+      resp.price_per_sqft = { latest_month: ppsfEntry.date, value: ppsfEntry.value, series: ppsfEntry.series.slice(-240), metro_key: region.toUpperCase() };
+    }
+    res.json(resp);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
