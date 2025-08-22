@@ -1,10 +1,13 @@
+console.log('[startup] Phase 1: loading core modules');
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+console.log('[startup] Phase 2: loading config');
 const config = require('./config'); // standard config load
+console.log('[startup] Phase 3: config loaded');
 let GoogleGenerativeAI = null;
 try {
   GoogleGenerativeAI = require("@google/generative-ai").GoogleGenerativeAI;
@@ -12,6 +15,7 @@ try {
   console.warn('Optional Gemini SDK failed to load:', e.message);
 }
 const { Client } = require("@googlemaps/google-maps-services-js");
+console.log('[startup] Phase 4: external SDKs loaded (maps)');
 
 // Instantiate Gemini client only if key + SDK present
 let genAI = null;
@@ -26,6 +30,7 @@ if (config.geminiApiKey && GoogleGenerativeAI) {
 console.log('[startup] server.js loaded. Gemini SDK present:', !!GoogleGenerativeAI, 'Gemini client init:', !!genAI);
 const mapsClient = new Client({});
 
+console.log('[startup] Phase 5: initializing express app');
 const app = express();
 const port = process.env.PORT || 3000; // Allow overriding port
 const host = process.env.HOST || '0.0.0.0'; // Bind to all interfaces for LAN access
@@ -315,13 +320,18 @@ app.use(express.json());
 app.use(express.static(__dirname));
 
 // Basic rate limiting to protect the endpoint
-const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  limit: 15, // max requests per IP per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/api/', limiter);
+if (!process.env.DISABLE_RATE_LIMIT) {
+  const limiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+  app.use('/api/', limiter);
+  console.log('[startup] Rate limiter enabled');
+} else {
+  console.log('[startup] Rate limiter DISABLED via env flag');
+}
 
 /**
  * Attempt to extract a US state (2-letter) from an address string.
