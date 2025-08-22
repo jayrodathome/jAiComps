@@ -4,27 +4,7 @@ const rateLimit = require('express-rate-limit');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
-let config;
-try {
-  config = require('./config'); // Configuration (loads env)
-} catch (e) {
-  console.error('[startup] Failed to load ./config module, falling back to env-only config:', e.message);
-  config = {
-    geminiApiKey: process.env.GEMINI_API_KEY || '',
-    googleApiKey: process.env.GOOGLE_API_KEY || '',
-    fbiApiKey: process.env.FBI_API_KEY || '',
-    zillowDatasets: {
-      zhviWide: process.env.ZILLOW_ZIP_ZHVI_CSV || 'https://files.zillowstatic.com/research/public_csvs/zhvi/Metro_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv',
-      pricePerSqft: 'https://files.zillowstatic.com/research/public_csvs/new_con_median_sale_price_per_sqft/Metro_new_con_median_sale_price_per_sqft_uc_sfrcondo_month.csv'
-    }
-  };
-}
-try {
-  const listing = fs.readdirSync(process.cwd()).slice(0,50).join(', ');
-  console.log('[startup] cwd:', process.cwd(), 'files:', listing);
-} catch (e) {
-  console.error('[startup] unable to list cwd:', e.message);
-}
+const config = require('./config'); // standard config load
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { Client } = require("@googlemaps/google-maps-services-js");
 
@@ -969,6 +949,7 @@ app.get('/healthz', (req, res) => {
 });
 
 app.listen(port, host, () => {
+  console.log('[readiness] express-listen-started', { port, host, pid: process.pid });
   // Determine a likely LAN IPv4 address
   const nets = os.networkInterfaces();
   let lan = null;

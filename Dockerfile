@@ -23,6 +23,7 @@ ENV NODE_ENV=production \
  # Add tini for proper signal handling
 RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app /app
+USER node
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "server.js"]
