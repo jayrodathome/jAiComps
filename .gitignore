@@ -10,4 +10,3 @@ node_modules/
 
 # Configuration file with secrets
 # DO NOT COMMIT THIS FILE!
-config.js
