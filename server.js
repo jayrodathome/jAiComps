@@ -1002,7 +1002,7 @@ app.get('/healthz', (req, res) => {
   res.status(200).json({ ok: true, uptime_s: process.uptime() });
 });
 
-app.listen(port, host, () => {
+const server = app.listen(port, host, () => {
   console.log('[readiness] express-listen-started', { port, host, pid: process.pid });
   // Determine a likely LAN IPv4 address
   const nets = os.networkInterfaces();
@@ -1027,6 +1027,9 @@ app.listen(port, host, () => {
   console.log(`  GOOGLE_API_KEY: ${mask(config.googleApiKey)}`);
   if (!config.geminiApiKey) console.warn('WARN: GEMINI_API_KEY not set — AI sections will be skipped.');
   if (!config.googleApiKey) console.warn('WARN: GOOGLE_API_KEY not set — Google Places/Geocode endpoints limited.');
+});
+
+server.on('listening', () => {
   if (!process.env.SKIP_PREFETCH) {
     // Warm-load Zillow datasets (non-blocking)
     (async () => {
