@@ -16,6 +16,16 @@ const port = process.env.PORT || 3000; // Allow overriding port
 const host = process.env.HOST || '0.0.0.0'; // Bind to all interfaces for LAN access
 const DATA_DIR = path.join(__dirname, 'data');
 
+// Crash diagnostics for Cloud Run
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT_EXCEPTION', err);
+  // give Cloud Run logs a chance to flush
+  setTimeout(()=>process.exit(1), 100);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED_REJECTION', reason);
+});
+
 // Simple in-memory cache { address: { data, expiresAt } }
 const CACHE_TTL = (parseInt(process.env.CACHE_TTL_SECONDS, 10) || 900) * 1000; // default 15m
 const cache = new Map();

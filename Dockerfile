@@ -1,7 +1,8 @@
-FROM node:20-alpine AS base
-WORKDIR /usr/src/app
-
-# Copy lock + manifest and install production deps. Fallback to npm install if npm ci unsupported.
+#############################
+# Build stage (installs deps)
+#############################
+FROM node:20 as build
+WORKDIR /app
 COPY package*.json ./
 RUN set -eux; \
     if [ -f package-lock.json ]; then \
@@ -10,13 +11,19 @@ RUN set -eux; \
         npm install --omit=dev; \
     fi; \
     npm cache clean --force >/dev/null 2>&1 || true
-
-# Copy application source
 COPY . .
 
+#############################
+# Runtime stage (smaller, Debian slim)
+#############################
+FROM node:20-slim
+WORKDIR /app
 ENV NODE_ENV=production \
         PORT=8080
-
+ # Add tini for proper signal handling
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app /app
+USER node
 EXPOSE 8080
-
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "server.js"]
