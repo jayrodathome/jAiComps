@@ -213,8 +213,10 @@ function findMsaKeyForAddress(address, msaMap) {
 }
 
 async function ensureZillowLoaded() {
-  if (zillowValues || !process.env.ZILLOW_ZIP_ZHVI_CSV) return;
-  await loadZillowWideCSV(process.env.ZILLOW_ZIP_ZHVI_CSV);
+  if (zillowValues) return; // already loaded
+  const src = process.env.ZILLOW_ZIP_ZHVI_CSV || (config.zillowDatasets && config.zillowDatasets.zhviWide);
+  if (!src) return; // nothing to load
+  await loadZillowWideCSV(src);
 }
 
 /**
