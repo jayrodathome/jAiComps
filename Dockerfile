@@ -1,18 +1,22 @@
 FROM node:20-alpine AS base
 WORKDIR /usr/src/app
 
-# Install production dependencies first (leverages Docker layer cache)
+# Copy lock + manifest and install production deps. Fallback to npm install if npm ci unsupported.
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN set -eux; \
+    if [ -f package-lock.json ]; then \
+        (npm ci --omit=dev || npm install --omit=dev); \
+    else \
+        npm install --omit=dev; \
+    fi; \
+    npm cache clean --force >/dev/null 2>&1 || true
 
 # Copy application source
 COPY . .
 
 ENV NODE_ENV=production \
-    PORT=8080
+        PORT=8080
 
-# Cloud Run will send traffic to $PORT
 EXPOSE 8080
 
-# Start the server (server.js already respects $PORT)
 CMD ["node", "server.js"]
