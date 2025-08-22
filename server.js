@@ -40,7 +40,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 
 // Behind Cloud Run / reverse proxies we must trust the forwarded headers for accurate rate limiting & IP logging.
 // TRUST_PROXY_HOPS can override (default 1 = only the immediate proxy).
-app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS) || 1);
+app.set('trust proxy', 1);
 
 // Crash diagnostics for Cloud Run
 process.on('uncaughtException', (err) => {
