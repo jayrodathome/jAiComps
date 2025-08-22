@@ -5,11 +5,25 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const config = require('./config'); // standard config load
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+let GoogleGenerativeAI = null;
+try {
+  GoogleGenerativeAI = require("@google/generative-ai").GoogleGenerativeAI;
+} catch (e) {
+  console.warn('Optional Gemini SDK failed to load:', e.message);
+}
 const { Client } = require("@googlemaps/google-maps-services-js");
 
-// Instantiate Gemini client only if key present (avoid throwing / failing fast when optional)
-const genAI = config.geminiApiKey ? new GoogleGenerativeAI(config.geminiApiKey) : null;
+// Instantiate Gemini client only if key + SDK present
+let genAI = null;
+if (config.geminiApiKey && GoogleGenerativeAI) {
+  try {
+    genAI = new GoogleGenerativeAI(config.geminiApiKey);
+  } catch (e) {
+    console.warn('Failed to init Gemini client:', e.message);
+  }
+}
+
+console.log('[startup] server.js loaded. Gemini SDK present:', !!GoogleGenerativeAI, 'Gemini client init:', !!genAI);
 const mapsClient = new Client({});
 
 const app = express();
