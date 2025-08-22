@@ -995,6 +995,8 @@ app.listen(port, host, () => {
   console.log(`  FBI_API_KEY: ${mask(config.fbiApiKey)}`);
   console.log(`  GEMINI_API_KEY: ${mask(config.geminiApiKey)}`);
   console.log(`  GOOGLE_API_KEY: ${mask(config.googleApiKey)}`);
+  if (!config.geminiApiKey) console.warn('WARN: GEMINI_API_KEY not set — AI sections will be skipped.');
+  if (!config.googleApiKey) console.warn('WARN: GOOGLE_API_KEY not set — Google Places/Geocode endpoints limited.');
   if (!process.env.SKIP_PREFETCH) {
     // Warm-load Zillow datasets (non-blocking)
     (async () => {
@@ -1009,6 +1011,36 @@ app.listen(port, host, () => {
   } else {
     console.log('SKIP_PREFETCH set; skipping Zillow prefetch');
   }
+});
+
+// Lightweight diagnostics endpoint to verify external API connectivity
+app.get('/api/diag', async (req, res) => {
+  const out = { ts: new Date().toISOString() };
+  // Gemini ping
+  if (config.geminiApiKey && genAI) {
+    try {
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const r = await model.generateContent('Return text: PING');
+      out.gemini = { ok: true, sample: (r.response && r.response.text ? r.response.text().slice(0,40) : 'ok') };
+    } catch (e) {
+      out.gemini = { ok: false, error: e.message.slice(0,200) };
+    }
+  } else {
+    out.gemini = { ok: false, error: 'key-missing' };
+  }
+  // Google geocode ping
+  if (config.googleApiKey) {
+    try {
+      const resp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent('Seattle, WA')}&key=${config.googleApiKey}`);
+      const j = await resp.json();
+      out.google_geocode = { ok: resp.ok, status: j.status, result_count: j.results?.length };
+    } catch (e) {
+      out.google_geocode = { ok: false, error: e.message.slice(0,200) };
+    }
+  } else {
+    out.google_geocode = { ok: false, error: 'key-missing' };
+  }
+  res.json(out);
 });
 
 // Endpoint to refresh Zillow dataset on-demand
