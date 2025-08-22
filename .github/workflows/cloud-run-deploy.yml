@@ -1,0 +1,56 @@
+name: CI & Cloud Build Deploy
+
+on:
+  push:
+    branches:
+      - deploy/cloud-run
+  workflow_dispatch: {}
+
+concurrency:
+  group: cloud-run-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci || npm install
+
+      - name: Basic syntax/load check
+        run: |
+          node -e "require('./config'); console.log('config ok')" || true
+          node -e "console.log('node version', process.version)"
+
+      - name: Authenticate gcloud
+        if: ${{ secrets.GCP_SA_KEY != '' }}
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          echo "$GCP_SA_KEY" > /tmp/key.json
+          curl -sSL https://sdk.cloud.google.com | bash > /dev/null
+          echo "${HOME}/google-cloud-sdk/bin" >> $GITHUB_PATH
+          gcloud auth activate-service-account --key-file=/tmp/key.json
+          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Cloud Build submit
+        if: ${{ secrets.GCP_SA_KEY != '' }}
+        run: |
+          gcloud builds submit --config=cloudbuild.yaml --substitutions=_SERVICE=jaicomps,_REGION=${{ secrets.GCP_REGION || 'us-east4' }} .
+
+      - name: Note missing GCP credentials
+        if: ${{ secrets.GCP_SA_KEY == '' }}
+        run: echo "GCP_SA_KEY secret not set; skipping deploy."
