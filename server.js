@@ -19,6 +19,12 @@ try {
     }
   };
 }
+try {
+  const listing = fs.readdirSync(process.cwd()).slice(0,50).join(', ');
+  console.log('[startup] cwd:', process.cwd(), 'files:', listing);
+} catch (e) {
+  console.error('[startup] unable to list cwd:', e.message);
+}
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { Client } = require("@googlemaps/google-maps-services-js");
 

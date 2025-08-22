@@ -23,10 +23,6 @@ ENV NODE_ENV=production \
  # Add tini for proper signal handling
 RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app /app
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
-# For debugging startup issues keep root; later we can drop to node
-# USER node
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/app/start.sh"]
+CMD ["node", "server.js"]
