@@ -9,26 +9,27 @@ console.log('[startup] Phase 2: loading config');
 const config = require('./config'); // standard config load
 console.log('[startup] Phase 3: config loaded');
 let GoogleGenerativeAI = null;
-try {
-  GoogleGenerativeAI = require("@google/generative-ai").GoogleGenerativeAI;
-} catch (e) {
-  console.warn('Optional Gemini SDK failed to load:', e.message);
-}
-const { Client } = require("@googlemaps/google-maps-services-js");
-console.log('[startup] Phase 4: external SDKs loaded (maps)');
-
-// Instantiate Gemini client only if key + SDK present
-let genAI = null;
-if (config.geminiApiKey && GoogleGenerativeAI) {
+try { GoogleGenerativeAI = require("@google/generative-ai").GoogleGenerativeAI; } catch(e){ console.warn('Optional Gemini SDK failed to load:', e.message); }
+let genAI = null; let genAIReady = false;
+let MapsClientCtor = null; let mapsClient = null;
+async function ensureGemini(){
+  if (genAIReady) return genAI;
+  if (!config.geminiApiKey) return null;
   try {
-    genAI = new GoogleGenerativeAI(config.geminiApiKey);
-  } catch (e) {
-    console.warn('Failed to init Gemini client:', e.message);
-  }
+    if (!GoogleGenerativeAI) GoogleGenerativeAI = require('@google/generative-ai').GoogleGenerativeAI;
+    genAI = new GoogleGenerativeAI(config.geminiApiKey); genAIReady = true; console.log('[lazy] Gemini client initialized');
+  } catch(e){ console.warn('Failed lazy Gemini init:', e.message); }
+  return genAI;
 }
-
-console.log('[startup] server.js loaded. Gemini SDK present:', !!GoogleGenerativeAI, 'Gemini client init:', !!genAI);
-const mapsClient = new Client({});
+function ensureMaps(){
+  if (mapsClient) return mapsClient;
+  try { if (!MapsClientCtor) MapsClientCtor = require('@googlemaps/google-maps-services-js').Client; mapsClient = new MapsClientCtor({}); console.log('[lazy] Google Maps client initialized'); }
+  catch(e){ console.warn('Failed maps client init:', e.message); }
+  return mapsClient;
+}
+if (process.env.FAST_START){ console.log('[startup] FAST_START=1 deferring external SDK init'); }
+else { ensureMaps(); ensureGemini(); console.log('[startup] Phase 4: attempted eager external SDK init'); }
+console.log('[startup] server.js loaded. Gemini SDK present:', !!GoogleGenerativeAI, 'Gemini client init:', genAIReady);
 
 console.log('[startup] Phase 5: initializing express app');
 const app = express();
@@ -558,13 +559,12 @@ async function getCrimeData(address) {
  */
 async function getPropertyDetailsFromGemini(address) {
   console.log(`Received request for address: ${address}`);
-  // Graceful skip if key missing
-  if (!config.geminiApiKey || !genAI) {
+  if (!config.geminiApiKey) {
     return { address, note: 'AI sections skipped (missing GEMINI_API_KEY).' };
   }
-
-  // Use a current Gemini model
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const g = await ensureGemini();
+  if (!g) return { address, note: 'AI sections skipped (Gemini unavailable).' };
+  const model = g.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   // This is where you replicate the instructions for your "Gem".
   // We provide a detailed system prompt and a "one-shot" example using your existing properties.json.
@@ -881,7 +881,9 @@ app.post('/api/getPlaceDetails', async (req, res) => {
   }
 
   try {
-    const geocodeResult = await mapsClient.geocode({
+  const mc_inst = ensureMaps();
+  if (!mc_inst) return res.status(500).json({ error: 'Maps client unavailable' });
+  const geocodeResult = await mc_inst.geocode({
       params: {
         address: address,
         key: config.googleApiKey,
@@ -890,7 +892,7 @@ app.post('/api/getPlaceDetails', async (req, res) => {
 
     const location = geocodeResult.data.results[0].geometry.location;
 
-    const placeResult = await mapsClient.placesNearby({
+  const placeResult = await mc_inst.placesNearby({
       params: {
         location: location,
         radius: 16093, // 10 miles in meters
@@ -901,7 +903,7 @@ app.post('/api/getPlaceDetails', async (req, res) => {
 
     const place = placeResult.data.results[0];
 
-    const distanceResult = await mapsClient.distancematrix({
+  const distanceResult = await mc_inst.distancematrix({
       params: {
         origins: [address],
         destinations: [`place_id:${place.place_id}`],
