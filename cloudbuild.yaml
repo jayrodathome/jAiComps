@@ -1,0 +1,56 @@
+substitutions:
+  _SERVICE: jaicomps
+  _REGION: us-east4
+  # Optional: artifact registry repo name if you created one (else image goes to GCR)
+  _REPO: jaicomps
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_SMALL
+
+steps:
+  # 1. Build container image from Dockerfile
+  - name: 'gcr.io/cloud-builders/docker'
+    id: Build
+    args:
+      - build
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA'
+      - '.'
+
+  # 2. Push image
+  - name: 'gcr.io/cloud-builders/docker'
+    id: Push
+    args:
+      - push
+      - 'gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA'
+
+  # 3. Deploy to Cloud Run (replace secrets if you set them up; remove set-env-vars if using set-secrets)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: Deploy
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        echo "Deploying ${_SERVICE} to region ${_REGION}..."
+        gcloud run deploy ${_SERVICE} \
+          --image gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA \
+          --region ${_REGION} \
+          --allow-unauthenticated \
+          --platform managed \
+          --timeout=300 \
+          --concurrency=80 \
+          --max-instances=100 \
+          --set-env-vars=NODE_ENV=production,CACHE_TTL_SECONDS=900 \
+          --set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,FBI_API_KEY=FBI_API_KEY:latest || exit 1
+
+images:
+  - 'gcr.io/$PROJECT_ID/${_SERVICE}:$SHORT_SHA'
+
+timeout: 900s
+
+# Trigger suggestion:
+#  - Event: Push to a branch
+#  - Branch (regex): ^deploy\/cloud-run$  (or ^deploy\/.*$ for all deploy/* branches)
+#  - Include this file (cloudbuild.yaml) at repo root
