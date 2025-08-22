@@ -1,8 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/sh
 set -euo pipefail
 echo "[startup] Node version: $(node -v)"
 echo "[startup] Working dir: $(pwd)"
 echo "[startup] Listing app root:"; ls -1
+if [ ! -f config.js ]; then
+	echo "[startup] WARNING: config.js missing in container root."; fi
 mask(){ local v="$1"; if [ -z "${v}" ]; then echo "(empty)"; else echo "${v:0:4}***${v: -4} (len:${#v})"; fi; }
 echo "[startup] PORT=$PORT NODE_ENV=$NODE_ENV"
 echo "[startup] GEMINI_API_KEY=$(mask "${GEMINI_API_KEY:-}")"
