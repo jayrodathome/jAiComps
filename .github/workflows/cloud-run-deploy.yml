@@ -39,17 +39,23 @@ jobs:
         if: ${{ secrets.GCP_SA_KEY != '' }}
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ secrets.GCP_REGION }}
         run: |
           echo "$GCP_SA_KEY" > /tmp/key.json
           curl -sSL https://sdk.cloud.google.com | bash > /dev/null
           echo "${HOME}/google-cloud-sdk/bin" >> $GITHUB_PATH
           gcloud auth activate-service-account --key-file=/tmp/key.json
-          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+          gcloud config set project "$GCP_PROJECT_ID"
+          echo "::notice ::Authenticated gcloud for project $GCP_PROJECT_ID"
 
       - name: Cloud Build submit
         if: ${{ secrets.GCP_SA_KEY != '' }}
+        env:
+          GCP_REGION: ${{ secrets.GCP_REGION }}
         run: |
-          gcloud builds submit --config=cloudbuild.yaml --substitutions=_SERVICE=jaicomps,_REGION=${{ secrets.GCP_REGION || 'us-east4' }} .
+          REGION=${GCP_REGION:-us-east4}
+          gcloud builds submit --config=cloudbuild.yaml --substitutions=_SERVICE=jaicomps,_REGION=$REGION .
 
       - name: Note missing GCP credentials
         if: ${{ secrets.GCP_SA_KEY == '' }}
