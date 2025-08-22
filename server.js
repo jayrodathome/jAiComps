@@ -8,7 +8,8 @@ const config = require('./config'); // standard config load
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { Client } = require("@googlemaps/google-maps-services-js");
 
-const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+// Instantiate Gemini client only if key present (avoid throwing / failing fast when optional)
+const genAI = config.geminiApiKey ? new GoogleGenerativeAI(config.geminiApiKey) : null;
 const mapsClient = new Client({});
 
 const app = express();
@@ -529,12 +530,12 @@ async function getCrimeData(address) {
  */
 async function getPropertyDetailsFromGemini(address) {
   console.log(`Received request for address: ${address}`);
-  
-  if (!config.geminiApiKey) {
-    throw new Error('Gemini API key not configured. Set GEMINI_API_KEY in .env');
+  // Graceful skip if key missing
+  if (!config.geminiApiKey || !genAI) {
+    return { address, note: 'AI sections skipped (missing GEMINI_API_KEY).' };
   }
 
-  // Use a current Gemini model (gemini-pro was deprecated / removed)
+  // Use a current Gemini model
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   // This is where you replicate the instructions for your "Gem".
@@ -580,13 +581,13 @@ ${address}
       throw primaryErr; // Rethrow so outer catch adds context
     }
   } catch (e) {
-    console.error("Error during Gemini API call or JSON parsing. Full error object:", JSON.stringify(e, null, 2));
+  console.error("Error during Gemini API call or JSON parsing. Full error object:", JSON.stringify(e, null, 2));
     // Include more details in the thrown error
     let errorMessage = e.message;
     if (e.response && e.response.data) {
       errorMessage += ` | Response data: ${JSON.stringify(e.response.data)}`;
     }
-    throw new Error(`Failed to get a valid JSON response from the AI model. Raw response: ${errorMessage}`);
+  return { address, note: 'AI generation failed', error: errorMessage.slice(0,400) };
   }
 }
 
@@ -639,8 +640,12 @@ app.post('/api/getPropertyDetails', async (req, res) => {
 
     let propertyData = { address };
     if (needAI) {
-      const aiData = await getPropertyDetailsFromGemini(address);
-      propertyData = { ...aiData };
+      try {
+        const aiData = await getPropertyDetailsFromGemini(address);
+        propertyData = { ...aiData };
+      } catch (e) {
+        console.warn('AI section skipped due to error:', e.message);
+      }
     }
 
     // Crime (only if requested)
@@ -810,7 +815,7 @@ app.post('/api/getPropertyDetails', async (req, res) => {
         propertyData.property_value = { note: 'Zillow dataset not loaded (set ZILLOW_ZIP_ZHVI_CSV in .env).' };
       }
     }
-    if (needAI) propertyData = normalizePropertyData(propertyData);
+  if (needAI && !propertyData.note) propertyData = normalizePropertyData(propertyData);
 
     // If selective return, strip unrequested keys
     if (requested) {
@@ -827,8 +832,10 @@ app.post('/api/getPropertyDetails', async (req, res) => {
     res.json(propertyData);
   } catch (error) {
     console.error('Error fetching property details:', error);
-    const status = /not configured/i.test(error.message) ? 500 : 502;
-    res.status(status).json({ error: error.message || 'Failed to retrieve property details.' });
+    // Always degrade gracefully with 200 + partial data if possible
+    if (!res.headersSent) {
+      res.status(200).json({ address: req.body?.address, note: 'Partial data (error during processing)', error: error.message });
+    }
   } finally {
     console.log(`Handled /api/getPropertyDetails in ${Date.now() - start}ms`);
   }
@@ -839,6 +846,10 @@ app.post('/api/getPlaceDetails', async (req, res) => {
 
   if (!placeName || !address) {
     return res.status(400).json({ error: 'Missing placeName or address' });
+  }
+
+  if (!config.googleApiKey) {
+    return res.status(400).json({ error: 'Missing GOOGLE_API_KEY' });
   }
 
   try {
@@ -889,8 +900,8 @@ app.post('/api/getPlaceDetails', async (req, res) => {
       direction: direction,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to get place details' });
+    console.error('getPlaceDetails error:', error?.message || error);
+    res.status(502).json({ error: 'Failed to get place details', detail: error?.message });
   }
 });
 
@@ -973,6 +984,16 @@ app.listen(port, host, () => {
   console.log(`  FBI_API_KEY: ${mask(config.fbiApiKey)}`);
   console.log(`  GEMINI_API_KEY: ${mask(config.geminiApiKey)}`);
   console.log(`  GOOGLE_API_KEY: ${mask(config.googleApiKey)}`);
+  // Warm-load Zillow datasets (non-blocking)
+  (async () => {
+    try {
+      await ensureZillowLoaded();
+      await ensurePpsfLoaded();
+      console.log('Prefetch complete: Zillow datasets loaded');
+    } catch (e) {
+      console.warn('Prefetch Zillow failed:', e.message);
+    }
+  })();
 });
 
 // Endpoint to refresh Zillow dataset on-demand
