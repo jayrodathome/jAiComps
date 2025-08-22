@@ -806,8 +806,8 @@ app.post('/api/getPropertyDetails', async (req, res) => {
       for (const key of Object.keys(propertyData)) {
         if (wants(key)) filtered[key] = propertyData[key];
       }
-      // Always include address if AI generated or requested explicitly
-      if (!filtered.address && wants('address')) filtered.address = address;
+      // Always include address so downstream features (place details) have context.
+      filtered.address = address;
       propertyData = filtered;
     }
 

@@ -8,23 +8,33 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
 </head>
 <body>
     <main class="container">
-        <h1>jAiComps L00kup</h1>
-        <form id="address-form" class="card">
-            <input type="text" id="address-input" placeholder="Enter a property address" required>
-            <button type="submit">Get Details</button>
-            <div class="checkbox-container">
-                <input type="checkbox" id="use-places-api">
-                <label for="use-places-api">Use Google Places API for more details</label>
+        <h1 class="page-title">jAiComps L00kup</h1>
+        <form id="address-form" class="lookup-card">
+            <div class="search-area">
+                <input type="text" id="address-input" placeholder="123 Main St, City, ST" required>
+                <div class="button-group">
+                    <button type="submit">Get Details</button>
+                </div>
+            </div>
+            <div class="sections-area">
+                <div class="label">Sections (leave all unchecked for full report)</div>
+                <div class="checkbox-grid">
+                    <div class="checkbox-item"><input id="sec-pv" type="checkbox" name="sections" value="property_value"><label for="sec-pv">Property Value</label></div>
+                    <div class="checkbox-item"><input id="sec-crime" type="checkbox" name="sections" value="crime"><label for="sec-crime">Crime</label></div>
+                    <div class="checkbox-item"><input id="sec-am" type="checkbox" name="sections" value="amenities_access"><label for="sec-am">Amenities</label></div>
+                    <div class="checkbox-item"><input id="sec-comm" type="checkbox" name="sections" value="commute"><label for="sec-comm">Commute</label></div>
+                    <div class="checkbox-item"><input id="sec-sch" type="checkbox" name="sections" value="schools"><label for="sec-sch">Schools</label></div>
+                    <div class="checkbox-item"><input id="sec-bb" type="checkbox" name="sections" value="broadband"><label for="sec-bb">Broadband</label></div>
+                    <div class="checkbox-item"><input id="sec-env" type="checkbox" name="sections" value="environmental_risk"><label for="sec-env">Environmental</label></div>
+                </div>
             </div>
         </form>
-
-        <!-- The JavaScript will populate this div with the property data -->
-        <div id="property-list">
-            <!-- This area will be populated after an address is submitted. -->
-        </div>
+    <!-- AI Summary card removed -->
+        <div id="property-list"></div>
     </main>
     <script src="app.js"></script>
 </body>

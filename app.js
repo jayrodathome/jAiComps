@@ -1,19 +1,36 @@
 // --- Helper functions for creating HTML elements ---
 
 /**
- * Creates a standard card element with a title.
+ * Creates a standard card element with a title and optional section-level details button.
  * @param {string} title - The title to display in an <h2> tag.
- * @returns {HTMLDivElement} The created card element.
+ * @param {object} [opts]
+ * @param {boolean} [opts.addDetailsButton=false] - Whether to add a top-level Get Details button.
+ * @returns {{card: HTMLDivElement, detailsButton: HTMLButtonElement|null}} The created card and optional button.
  */
-const createCard = (title) => {
+const createCard = (title, opts = {}) => {
   const card = document.createElement('div');
   card.className = 'card section';
 
+  const header = document.createElement('div');
+  header.style.display = 'flex';
+  header.style.alignItems = 'center';
+  header.style.gap = '8px';
   const cardTitle = document.createElement('h2');
   cardTitle.textContent = title;
-  card.appendChild(cardTitle);
+  cardTitle.style.flex = '1';
+  header.appendChild(cardTitle);
 
-  return card;
+  let detailsButton = null;
+  if (opts.addDetailsButton) {
+    detailsButton = document.createElement('button');
+    detailsButton.type = 'button';
+    detailsButton.textContent = 'Details';
+    detailsButton.className = 'section-details-btn';
+    header.appendChild(detailsButton);
+  }
+
+  card.appendChild(header);
+  return { card, detailsButton };
 };
 
 /**
@@ -43,25 +60,13 @@ async function getPlaceDetails(placeName, address, button) {
       throw new Error(`Server error! Status: ${response.status}`);
     }
 
-    const data = await response.json();
-
-    const table = document.createElement('table');
-    table.innerHTML = `
-      <tr>
-        <th>Distance</th>
-        <th>Duration</th>
-        <th>Direction</th>
-        <th>Google Maps</th>
-      </tr>
-      <tr>
-        <td>${data.distance}</td>
-        <td>${data.duration}</td>
-        <td>${data.direction}</td>
-        <td><a href="${data.url}" target="_blank">View on Google Maps</a></td>
-      </tr>
-    `;
-
-    button.parentNode.replaceChild(table, button);
+  const data = await response.json();
+  button.textContent = '✓';
+  button.classList.add('mini-btn-done');
+  const span = document.createElement('span');
+  span.className = 'inline-details';
+  span.innerHTML = `${data.distance} • ${data.duration} • ${data.direction} • <a href="${data.url}" target="_blank">Map</a>`;
+  button.insertAdjacentElement('afterend', span);
 
   } catch (error) {
     console.error('Fetch error:', error);
@@ -79,25 +84,22 @@ const renderPropertyData = (container, data) => {
   container.innerHTML = '';
 
   // Generic function to render a section card
-  const renderSection = (title, contentRenderer, sectionData) => {
+  const renderSection = (title, contentRenderer, sectionData, options = {}) => {
     if (!sectionData) return;
-    const card = createCard(title);
-    const content = contentRenderer(sectionData);
+    const { card, detailsButton } = createCard(title, { addDetailsButton: options.addDetailsButton });
+    const content = contentRenderer(sectionData, { card, detailsButton });
     content.forEach(el => card.appendChild(el));
+    if (detailsButton && options.onDetails) {
+      detailsButton.addEventListener('click', () => options.onDetails({ card, button: detailsButton, sectionData }));
+    }
     container.appendChild(card);
   };
 
   // --- Render all sections using the data ---
 
-  if (data.address) {
-    renderSection('Address', (d) => {
-      const p = document.createElement('p');
-      p.textContent = d;
-      return [p];
-    }, data.address);
-  }
+  // Address card removed per UI simplification request; address still used internally for place detail lookups.
 
-  if (data.amenities_access) renderSection('Amenities Access', (d) => {
+  if (data.amenities_access) renderSection('Amenities Access', (d, { card, detailsButton }) => {
     const scoresDiv = document.createElement('div');
     scoresDiv.className = 'score-grid';
     scoresDiv.innerHTML = `
@@ -106,7 +108,7 @@ const renderPropertyData = (container, data) => {
       <div class="score-box"><strong>Bike Score</strong><div class="score-value">${d.bike_score}</div></div>`;
 
     const ul = document.createElement('ul');
-    const notable = d.notable_amenities;
+    const notable = d.notable_amenities || {};
     const amenityCategories = {
       "Supermarkets": notable.supermarkets,
       "Pharmacies": notable.pharmacies,
@@ -116,27 +118,67 @@ const renderPropertyData = (container, data) => {
       "Parks": notable.parks
     };
 
+    // Build list items with truncated inline then later we'll append tables after details fetch
     for (const [category, items] of Object.entries(amenityCategories)) {
+      if (!Array.isArray(items) || !items.length) continue;
       const li = document.createElement('li');
-      li.innerHTML = `<strong>${category}:</strong> ${formatNamedList(items)}`;
-      // Add per-item Get Details buttons for categories likely representing specific places
-      if (Array.isArray(items) && items.length && ['Supermarkets','Pharmacies','Hospitals','Parks'].includes(category)) {
-        const btnWrap = document.createElement('span');
-        btnWrap.style.marginLeft = '6px';
-        items.forEach(item => {
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.textContent = 'Get Details';
-          b.style.marginLeft = '4px';
-          b.addEventListener('click', () => getPlaceDetails(item.name, data.address, b));
-          btnWrap.appendChild(b);
-        });
-        li.appendChild(btnWrap);
-      }
+      li._items = items; // store full items array for later
+      li.dataset.category = category;
+      const first = items.slice(0,4);
+      li.innerHTML = `<strong>${category}:</strong> ${first.map(it=>`${it.name} (${it.distance_mi} mi)`).join(', ')}${items.length>4?' …':''}`;
       ul.appendChild(li);
     }
+
     return [scoresDiv, ul];
-  }, data.amenities_access);
+  }, data.amenities_access, {
+    addDetailsButton: true,
+    onDetails: async ({ card, button, sectionData }) => {
+      if (card.dataset.detailsLoaded) return; // prevent duplicate fetch
+      button.disabled = true; const original = button.textContent; button.textContent = 'Loading...';
+      const address = data.address;
+
+      async function fetchPlaceDetails(placeName) {
+        try {
+          const r = await fetch('/api/getPlaceDetails', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ placeName, address }) });
+          if (!r.ok) throw new Error('bad status');
+          return await r.json();
+        } catch (e) {
+          console.warn('Details fetch failed for', placeName, e);
+          return null;
+        }
+      }
+
+      const listItems = Array.from(card.querySelectorAll('ul > li'));
+      for (const li of listItems) {
+        const items = li._items || [];
+        if (!items.length) continue;
+        const detailPromises = items.map(it => fetchPlaceDetails(it.name));
+        const detailsArr = await Promise.all(detailPromises);
+        // Clear inline names so only category label remains
+        li.innerHTML = `<strong>${li.dataset.category}:</strong>`;
+        const table = document.createElement('table');
+        table.className = 'amenity-details-table narrow-table';
+        table.style.marginTop = '4px';
+  table.innerHTML = `<thead><tr><th>Name</th><th>Dist</th><th>Drive</th><th>Duration</th><th>Dir</th><th>Map</th></tr></thead>`;
+        const tbody = document.createElement('tbody');
+        items.forEach((item, idx) => {
+          const det = detailsArr[idx];
+          const tr = document.createElement('tr');
+          const driveDist = det?.distance || '—';
+            const duration = det?.duration || '—';
+            const direction = det?.direction || '—';
+            const mapLink = det?.url ? `<a href="${det.url}" target="_blank">Map</a>` : '—';
+          tr.innerHTML = `<td>${item.name}</td><td>${item.distance_mi ?? '—'}</td><td>${driveDist}</td><td>${duration}</td><td>${direction}</td><td>${mapLink}</td>`;
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        li.appendChild(table);
+      }
+      card.dataset.detailsLoaded = '1';
+      button.textContent = 'Loaded ✓';
+      button.classList.add('mini-btn-done');
+    }
+  });
 
   if (data.commute) renderSection('Commute', (d) => {
     const transit = d.transit || {};
@@ -167,15 +209,50 @@ const renderPropertyData = (container, data) => {
     const schoolLevels = { "Elementary": d.elementary, "Middle": d.middle, "High": d.high };
     for (const [level, details] of Object.entries(schoolLevels)) {
       const li = document.createElement('li');
+      li._school = details;
+      li.dataset.level = level;
       li.innerHTML = `<strong>${level}:</strong> ${details.name} (${details.distance_mi} mi)`;
-      const button = document.createElement('button');
-      button.textContent = 'Get Details';
-      button.addEventListener('click', () => getPlaceDetails(details.name, data.address, button));
-      li.appendChild(button);
       ul.appendChild(li);
     }
     return [ul];
-  }, data.schools);
+  }, data.schools, {
+    addDetailsButton: true,
+    onDetails: async ({ card, button }) => {
+      if (card.dataset.detailsLoaded) return;
+      button.disabled = true; const original = button.textContent; button.textContent = 'Loading...';
+      const address = data.address;
+      async function fetchPlaceDetails(placeName) {
+        try {
+          const r = await fetch('/api/getPlaceDetails', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ placeName, address }) });
+          if (!r.ok) throw new Error('bad status');
+          return await r.json();
+        } catch (e) { return null; }
+      }
+      const ulEl = card.querySelector('ul');
+      const lis = Array.from(ulEl.querySelectorAll('li'));
+      const table = document.createElement('table');
+      table.className = 'school-details-table narrow-table';
+      table.style.marginTop = '8px';
+  table.innerHTML = `<thead><tr><th>School</th><th>Dist</th><th>Drive</th><th>Duration</th><th>Dir</th><th>Map</th></tr></thead>`;
+      const tbody = document.createElement('tbody');
+      const labelMap = { Elementary: 'elementary', Middle: 'middle school', High: 'high school' };
+      for (const li of lis) {
+        const sch = li._school;
+        const det = await fetchPlaceDetails(sch.name);
+        const simpleName = `${sch.name} (${labelMap[li.dataset.level] || li.dataset.level.toLowerCase()})`;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${simpleName}</td><td>${sch.distance_mi ?? '—'}</td><td>${det?.distance || '—'}</td><td>${det?.duration || '—'}</td><td>${det?.direction || '—'}</td><td>${det?.url ? `<a href='${det.url}' target='_blank'>Map</a>` : '—'}</td>`;
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      // Remove the original level list entirely
+      if (ulEl) ulEl.remove();
+      card.appendChild(table);
+      card.dataset.detailsLoaded = '1';
+      button.textContent = 'Loaded ✓';
+      button.classList.add('mini-btn-done');
+    }
+  });
 
   if (data.crime) renderSection('Crime', (d) => {
     const elements = [];
@@ -292,15 +369,25 @@ const renderPropertyData = (container, data) => {
       addStat('Latest Data', d.latest_month || '—');
       addStat('Level', d.type ? d.type.toUpperCase() : '—');
       if (d.distance_miles) addStat('Distance to Metro', `${d.distance_miles} mi`);
-      if (d.price_per_sqft && d.price_per_sqft.value) addStat('Price / SqFt', '$'+d.price_per_sqft.value.toLocaleString(undefined,{maximumFractionDigits:0}));
+      // Derive latest PPSF value (use explicit value or last non-null in series)
+      if (d.price_per_sqft) {
+        let ppsfVal = d.price_per_sqft.value;
+        if ((ppsfVal === undefined || ppsfVal === null) && Array.isArray(d.price_per_sqft.series)) {
+          const lastValid = [...d.price_per_sqft.series].reverse().find(p=>p && p.value !== undefined && p.value !== null);
+            ppsfVal = lastValid ? lastValid.value : null;
+        }
+        if (ppsfVal !== undefined && ppsfVal !== null) {
+          addStat('Price / SqFt', '$'+ppsfVal.toLocaleString(undefined,{maximumFractionDigits:0}));
+        }
+      }
       const chartDiv = document.createElement('div'); chartDiv.id = 'propertyValueChart'; chartDiv.className='pv-chart';
       // Chart mode toggle if PPSF present
       let chartMode = 'value';
       let modeToggle = null;
       if (d.price_per_sqft && d.price_per_sqft.series) {
         modeToggle = document.createElement('div');
-        modeToggle.style.display='flex'; modeToggle.style.justifyContent='flex-end'; modeToggle.style.gap='6px'; modeToggle.style.marginBottom='4px';
-        ['value','ppsf'].forEach(m=>{ const btn=document.createElement('button'); btn.type='button'; btn.textContent= m==='value' ? 'Median Value' : 'Price / SqFt'; btn.style.padding='4px 10px'; btn.style.fontSize='11px'; btn.style.borderRadius='14px'; btn.style.border='1px solid #e2e8f0'; btn.style.background= m===chartMode ? '#4f46e5' : 'transparent'; btn.style.color= m===chartMode ? '#fff' : '#334155'; btn.addEventListener('click',()=>{ chartMode=m; Array.from(modeToggle.children).forEach(c=>{ c.style.background='transparent'; c.style.color='#334155'; }); btn.style.background='#4f46e5'; btn.style.color='#fff'; renderChart(); }); modeToggle.appendChild(btn); });
+        modeToggle.className='pv-mode-toggle';
+        ['value','ppsf'].forEach(m=>{ const btn=document.createElement('button'); btn.type='button'; btn.textContent= m==='value' ? 'Median Value' : 'Price / SqFt'; if(m===chartMode) btn.classList.add('active'); btn.addEventListener('click',()=>{ if(chartMode===m) return; chartMode=m; Array.from(modeToggle.children).forEach(c=>c.classList.remove('active')); btn.classList.add('active'); renderChart(); }); modeToggle.appendChild(btn); });
         card.appendChild(modeToggle);
       }
       const footer = document.createElement('div'); footer.className='pv-footer';
@@ -330,21 +417,28 @@ const renderPropertyData = (container, data) => {
           else { categories = d.yearly.map(r=>r.year); values = d.yearly.map(r=>r.zhvi); }
           label = 'Median Value';
         }
+        // Y-axis config differs for PPSF: show increments of $100
+        let yaxis;
+        if (chartMode==='ppsf') {
+          const maxVal = Math.max(...values.filter(v=>typeof v==='number'));
+          const yMax = Math.max(100, Math.ceil(maxVal/100)*100);
+          const tickCount = Math.min(10, Math.ceil(yMax/100));
+          yaxis = { min:0, max:yMax, tickAmount: tickCount, labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>'$'+v } };
+        } else {
+          yaxis = { labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>{ if(v===0) return '$0'; return '$'+(v>=1_000_000?(v/1_000_000).toFixed(1)+'M':(v/1000).toFixed(0)+'K'); } } };
+        }
         const options = {
           series:[{ name: label, data: values }],
-          chart:{ type:'area', height:260, toolbar:{show:false}, zoom:{enabled:false}, animations:{enabled:true} },
-          stroke:{ curve:'smooth', width:2.5 },
+          chart:{ type:'area', height:260, toolbar:{show:false}, zoom:{enabled:false}, animations:{enabled:true}, foreColor:'#9ca3af' },
+          stroke:{ curve:'smooth', width:2.2 },
           dataLabels:{ enabled:false },
-          // Force x-axis to show only the 4-digit year (e.g. 2025) regardless of monthly or yearly category values.
-          xaxis:{ type:'category', categories, tickAmount: Math.min(10, Math.max(3, Math.floor(categories.length/3))), labels:{ rotate:0, style:{ colors:'#64748b', fontSize:'11px' }, formatter:(val)=>{ if(val===undefined||val===null) return ''; const s=val.toString(); // expect formats YYYY or YYYY-MM
-              if(/^\d{4}-\d{2}$/.test(s)) return s.slice(0,4); if(/^\d{4}$/.test(s)) return s; // fallback: first 4 digits
-              const m = s.match(/(19|20)\d{2}/); return m?m[0]:s; } }, axisBorder:{show:false}, axisTicks:{show:false} },
-          yaxis:{ labels:{ style:{ colors:'#64748b', fontSize:'12px' }, formatter:(v)=>'$'+(v>=1_000_000?(v/1_000_000).toFixed(1)+'M':(v/1000).toFixed(0)+'K') } },
-          grid:{ borderColor:'#f1f5f9', strokeDashArray:4 },
-          tooltip:{ y:{ formatter:(val)=>'$'+val.toLocaleString() } },
-          fill:{ type:'gradient', gradient:{ shadeIntensity:1, opacityFrom:0.35, opacityTo:0.05, stops:[0,100] } },
+          xaxis:{ type:'category', categories, tickAmount: Math.min(10, Math.max(4, Math.floor(categories.length/4))), labels:{ rotate:0, style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(val)=>{ if(val===undefined||val===null) return ''; const s=val.toString(); if(/^\d{4}-\d{2}$/.test(s)) return s.slice(0,4); if(/^\d{4}$/.test(s)) return s; const m = s.match(/(19|20)\d{2}/); return m?m[0]:s; } }, axisBorder:{show:false}, axisTicks:{show:false} },
+          yaxis,
+          grid:{ borderColor:'#374151', strokeDashArray:4 },
+          tooltip:{ theme:'dark', x:{ show:false }, marker:{ show:true }, y:{ formatter:(val)=>'$'+val.toLocaleString() } },
+          fill:{ type:'gradient', gradient:{ shadeIntensity:1, opacityFrom:0.25, opacityTo:0.05, stops:[0,100] } },
           markers:{ size:0, hover:{size:5} },
-          colors:['#4f46e5']
+          colors:['#22c55e']
         };
         chartDiv.innerHTML='';
         try { const chart=new ApexCharts(chartDiv, options); chart.render(); } catch(e){ console.warn('ApexCharts render failed', e); }
