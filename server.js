@@ -947,11 +947,22 @@ app.get('/api/testFbiKey', async (req, res) => {
 // Debug endpoint to confirm keys are loading (masked)
 app.get('/api/debugEnv', (req, res) => {
   const mask = (k) => k ? `${k.slice(0,4)}...${k.slice(-4)} (len:${k.length})` : null;
+  let writeTest = null;
+  try {
+    const testPath = path.join(__dirname, 'data', '.writetest');
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(testPath, 'ok');
+    fs.unlinkSync(testPath);
+    writeTest = 'ok';
+  } catch (e) {
+    writeTest = `fail: ${e.message}`;
+  }
   res.json({
     gemini_present: !!config.geminiApiKey,
     google_present: !!config.googleApiKey,
     fbi_present: !!config.fbiApiKey,
   zillow_csv: process.env.ZILLOW_ZIP_ZHVI_CSV || null,
+    write_test: writeTest,
     fbi_masked: mask(config.fbiApiKey)
   });
 });
@@ -984,16 +995,20 @@ app.listen(port, host, () => {
   console.log(`  FBI_API_KEY: ${mask(config.fbiApiKey)}`);
   console.log(`  GEMINI_API_KEY: ${mask(config.geminiApiKey)}`);
   console.log(`  GOOGLE_API_KEY: ${mask(config.googleApiKey)}`);
-  // Warm-load Zillow datasets (non-blocking)
-  (async () => {
-    try {
-      await ensureZillowLoaded();
-      await ensurePpsfLoaded();
-      console.log('Prefetch complete: Zillow datasets loaded');
-    } catch (e) {
-      console.warn('Prefetch Zillow failed:', e.message);
-    }
-  })();
+  if (!process.env.SKIP_PREFETCH) {
+    // Warm-load Zillow datasets (non-blocking)
+    (async () => {
+      try {
+        await ensureZillowLoaded();
+        await ensurePpsfLoaded();
+        console.log('Prefetch complete: Zillow datasets loaded');
+      } catch (e) {
+        console.warn('Prefetch Zillow failed:', e.message);
+      }
+    })();
+  } else {
+    console.log('SKIP_PREFETCH set; skipping Zillow prefetch');
+  }
 });
 
 // Endpoint to refresh Zillow dataset on-demand
