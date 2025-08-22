@@ -31,6 +31,10 @@ const port = process.env.PORT || 3000; // Allow overriding port
 const host = process.env.HOST || '0.0.0.0'; // Bind to all interfaces for LAN access
 const DATA_DIR = path.join(__dirname, 'data');
 
+// Behind Cloud Run / reverse proxies we must trust the forwarded headers for accurate rate limiting & IP logging.
+// TRUST_PROXY_HOPS can override (default 1 = only the immediate proxy).
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS) || 1);
+
 // Crash diagnostics for Cloud Run
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT_EXCEPTION', err);
