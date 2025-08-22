@@ -1,0 +1,7 @@
+# gcloud uses .gcloudignore; if absent it falls back to .gitignore
+# Start from dockerignore patterns for smaller upload
+node_modules
+npm-debug.log
+.git
+.env
+data/*.csv

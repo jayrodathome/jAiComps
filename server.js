@@ -933,6 +933,11 @@ app.get('/api/debugEnv', (req, res) => {
   });
 });
 
+// Simple health check for Cloud Run / uptime probes
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ ok: true, uptime_s: process.uptime() });
+});
+
 app.listen(port, host, () => {
   // Determine a likely LAN IPv4 address
   const nets = os.networkInterfaces();
