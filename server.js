@@ -75,6 +75,15 @@ app.get('/api/envMeta', (req,res)=>{
   res.json(body);
 });
 
+app.get('/api/secretStatus', async (req,res)=>{
+  try {
+    await config.ensureSecrets();
+    res.json(config.secretStatus());
+  } catch(e){
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Crash diagnostics for Cloud Run
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT_EXCEPTION', err);
