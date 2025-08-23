@@ -13,6 +13,13 @@ console.log('[startup] Phase 3: config loaded (keys present?)', {
   google: !!config.googleApiKey,
   fbi: !!config.fbiApiKey
 });
+// Summarize additional environment meta for diagnostics (without revealing values)
+console.log('[startup] Env meta:', {
+  projectId: process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || null,
+  serviceAccount: process.env.K_SERVICE ? 'cloud-run' : null,
+  kService: process.env.K_SERVICE || null,
+  revision: process.env.K_REVISION || null
+});
 let GoogleGenerativeAI = null;
 try { GoogleGenerativeAI = require("@google/generative-ai").GoogleGenerativeAI; } catch(e){ console.warn('Optional Gemini SDK failed to load:', e.message); }
 let genAI = null; let genAIReady = false;
@@ -45,6 +52,19 @@ const DATA_DIR = path.join(__dirname, 'data');
 // Behind Cloud Run / reverse proxies we must trust the forwarded headers for accurate rate limiting & IP logging.
 // TRUST_PROXY_HOPS can override (default 1 = only the immediate proxy).
 app.set('trust proxy', 1);
+
+// Lightweight env meta endpoint (booleans only, no secret values)
+app.get('/api/envMeta', (req,res)=>{
+  res.json({
+    gemini: !!config.geminiApiKey,
+    google: !!config.googleApiKey,
+    fbi: !!config.fbiApiKey,
+    projectId: process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || null,
+    kService: process.env.K_SERVICE || null,
+    revision: process.env.K_REVISION || null,
+    runtimeServiceAccount: process.env.K_SERVICE ? 'cloud-run-attached' : null
+  });
+});
 
 // Crash diagnostics for Cloud Run
 process.on('uncaughtException', (err) => {
