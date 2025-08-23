@@ -4,6 +4,9 @@ Dockerfile*
 docker-compose*
 .git
 .gitignore
+.github
 .env
 data/*.csv
 **/*.md
+*.log
+.DS_Store

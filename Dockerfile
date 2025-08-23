@@ -1,29 +1,28 @@
 #############################
 # Build stage (installs deps)
 #############################
-FROM node:20 as build
+FROM node:20 AS build
 WORKDIR /app
+# Install production dependencies first (leverages Docker layer cache when src changes)
 COPY package*.json ./
 RUN set -eux; \
-    if [ -f package-lock.json ]; then \
-        (npm ci --omit=dev || npm install --omit=dev); \
-    else \
-        npm install --omit=dev; \
-    fi; \
+    npm ci --omit=dev || npm install --omit=dev; \
     npm cache clean --force >/dev/null 2>&1 || true
+# Copy only source we need
 COPY . .
 
 #############################
 # Runtime stage (smaller, Debian slim)
 #############################
-FROM node:20-slim
+FROM node:20-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
-        PORT=8080
- # Add tini for proper signal handling
-RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
-COPY --from=build /app /app
-RUN chown -R node:node /app
+        PORT=8080 \
+        NODE_OPTIONS="--enable-source-maps"
+# Add tini for proper signal handling then remove apt lists
+RUN apt-get update && apt-get install -y --no-install-recommends tini \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build --chown=node:node /app /app
 USER node
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--"]
