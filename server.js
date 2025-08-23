@@ -8,11 +8,18 @@ const fs = require('fs');
 const path = require('path');
 console.log('[startup] Phase 2: loading config');
 const config = require('./config');
-console.log('[startup] Phase 3: config loaded (keys present?)', {
-  gemini: !!config.geminiApiKey,
-  google: !!config.googleApiKey,
-  fbi: !!config.fbiApiKey
-});
+function logKeyStatus(phase){
+  console.log(`${phase} (keys present?)`, { gemini: !!config.geminiApiKey, google: !!config.googleApiKey, fbi: !!config.fbiApiKey });
+}
+logKeyStatus('[startup] Phase 3: config loaded');
+// Attempt lazy secret fetch if any missing
+(async () => {
+  if (!config.geminiApiKey || !config.googleApiKey || !config.fbiApiKey) {
+    console.log('[startup] Some keys missing; attempting Secret Manager fallback');
+    try { await config.ensureSecrets(); logKeyStatus('[startup] Post-secret-fetch'); }
+    catch(e){ console.warn('Secret fallback failed', e.message); }
+  }
+})();
 // Summarize additional environment meta for diagnostics (without revealing values)
 console.log('[startup] Env meta:', {
   projectId: process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || null,
@@ -55,15 +62,17 @@ app.set('trust proxy', 1);
 
 // Lightweight env meta endpoint (booleans only, no secret values)
 app.get('/api/envMeta', (req,res)=>{
-  res.json({
+  const body = {
     gemini: !!config.geminiApiKey,
     google: !!config.googleApiKey,
     fbi: !!config.fbiApiKey,
     projectId: process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || null,
     kService: process.env.K_SERVICE || null,
     revision: process.env.K_REVISION || null,
-    runtimeServiceAccount: process.env.K_SERVICE ? 'cloud-run-attached' : null
-  });
+    runtimeServiceAccount: process.env.K_SERVICE ? 'cloud-run-attached' : null,
+    gitSha: process.env.GIT_SHA || null
+  };
+  res.json(body);
 });
 
 // Crash diagnostics for Cloud Run
