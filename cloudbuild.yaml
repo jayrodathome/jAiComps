@@ -42,7 +42,7 @@ steps:
           --timeout=300 \
           --concurrency=80 \
           --max-instances=100 \
-          --set-env-vars=NODE_ENV=production,CACHE_TTL_SECONDS=900 \
+          --set-env-vars=NODE_ENV=production,CACHE_TTL_SECONDS=900,GIT_SHA=$SHORT_SHA \
           --set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,FBI_API_KEY=FBI_API_KEY:latest || exit 1
 
 images:
