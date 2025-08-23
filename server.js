@@ -7,8 +7,12 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 console.log('[startup] Phase 2: loading config');
-const config = require('./config'); // standard config load
-console.log('[startup] Phase 3: config loaded');
+const config = require('./config');
+console.log('[startup] Phase 3: config loaded (keys present?)', {
+  gemini: !!config.geminiApiKey,
+  google: !!config.googleApiKey,
+  fbi: !!config.fbiApiKey
+});
 let GoogleGenerativeAI = null;
 try { GoogleGenerativeAI = require("@google/generative-ai").GoogleGenerativeAI; } catch(e){ console.warn('Optional Gemini SDK failed to load:', e.message); }
 let genAI = null; let genAIReady = false;
@@ -24,7 +28,7 @@ async function ensureGemini(){
 }
 function ensureMaps(){
   if (mapsClient) return mapsClient;
-  try { if (!MapsClientCtor) MapsClientCtor = require('@googlemaps/google-maps-services-js').Client; mapsClient = new MapsClientCtor({}); console.log('[lazy] Google Maps client initialized'); }
+  try { if (!MapsClientCtor) MapsClientCtor = require('@googlemaps/google-maps-services-js').Client; mapsClient = new MapsClientCtor({}); console.log('[lazy] Google Maps client initialized'); } 
   catch(e){ console.warn('Failed maps client init:', e.message); }
   return mapsClient;
 }
@@ -181,7 +185,7 @@ async function loadZillowPricePerSqftCSV(filePath) {
       const regionType = (row[regionTypeIdx]||'').trim().toLowerCase();
       if (!regionName || regionType !== 'msa') continue;
       const series=[]; let latest=null;
-      for (let di=0; di<dateCols.length; di++) { const {col, ym} = dateCols[di]; const valStr=row[col]; if (valStr && !isNaN(+valStr)) { const v=+valStr; series.push({ym,value:v}); latest={ym,value:v}; } }
+      for (let di=0; di<dateCols.length; di++) { const {col, ym} = dateCols[di]; const valStr=row[col]; if (valStr && !isNaN(+valStr)) { const v=+valStr; series.push({ym,value:v}); latest={ym,value:v}; } } 
       if (!latest) continue;
       msaMap.set(regionName.toUpperCase(), { date: latest.ym, value: latest.value, series });
     }
@@ -748,11 +752,10 @@ app.post('/api/getPropertyDetails', async (req, res) => {
                   const levenshtein = (a,b)=>{ const m=[...Array(b.length+1)].map((_,i)=>i); for(let i=1;i<=a.length;i++){ let prev=i-1; m[0]=i; for(let j=1;j<=b.length;j++){ const tmp=m[j]; m[j]=a[i-1]===b[j-1]?prev:Math.min(prev,m[j-1],m[j])+1; prev=tmp;} } return m[b.length]; };
                   let bestDist = Infinity;
                   for (const key of zillowValues.msaMap.keys()) {
-                    if (key.endsWith(`, ${targetStateUpper}`)) {
-                      const cityPart = key.split(',')[0];
-                      const dist = levenshtein(cityPart, targetCityUpper);
-                      if (dist < bestDist) { bestDist = dist; bestKey = key; }
-                    }
+                    if (!key.endsWith(`, ${targetStateUpper}`)) continue;
+                    const cityPart = key.split(',')[0];
+                    const dist = levenshtein(cityPart, targetCityUpper);
+                    if (dist < bestDist) { bestDist = dist; bestKey = key; }
                   }
                   if (bestDist > 3) bestKey = null; // discard poor match
                 }
@@ -1123,3 +1126,4 @@ app.post('/api/regionValues', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// (Removed async startServer; config already loaded synchronously)
