@@ -380,14 +380,61 @@ const renderPropertyData = (container, data) => {
           addStat('Price / SqFt', '$'+ppsfVal.toLocaleString(undefined,{maximumFractionDigits:0}));
         }
       }
+      
+      // Add new construction sales stat
+      if (d.new_construction) {
+        let newConVal = d.new_construction.value;
+        if ((newConVal === undefined || newConVal === null) && Array.isArray(d.new_construction.series)) {
+          const lastValid = [...d.new_construction.series].reverse().find(p=>p && p.value !== undefined && p.value !== null);
+          newConVal = lastValid ? lastValid.value : null;
+        }
+        if (newConVal !== undefined && newConVal !== null) {
+          addStat('New Construction', newConVal.toLocaleString() + ' sales');
+        }
+      }
+      
+      // Add affordability index stat
+      if (d.affordability_index) {
+        let affordVal = d.affordability_index.value;
+        if ((affordVal === undefined || affordVal === null) && Array.isArray(d.affordability_index.series)) {
+          const lastValid = [...d.affordability_index.series].reverse().find(p=>p && p.value !== undefined && p.value !== null);
+          affordVal = lastValid ? lastValid.value : null;
+        }
+        if (affordVal !== undefined && affordVal !== null) {
+          const formattedVal = affordVal >= 1000 ? '$' + Math.round(affordVal/1000) + 'K' : '$' + affordVal.toLocaleString();
+          addStat('Income Needed', formattedVal);
+        }
+      }
       const chartDiv = document.createElement('div'); chartDiv.id = 'propertyValueChart'; chartDiv.className='pv-chart';
-      // Chart mode toggle if PPSF present
+      // Chart mode toggle for multiple datasets
       let chartMode = 'value';
       let modeToggle = null;
-      if (d.price_per_sqft && d.price_per_sqft.series) {
+      const availableModes = ['value'];
+      
+      if (d.price_per_sqft && d.price_per_sqft.series) availableModes.push('ppsf');
+      if (d.new_construction && d.new_construction.series) availableModes.push('newcon');
+      if (d.affordability_index && d.affordability_index.series) availableModes.push('afford');
+      
+      if (availableModes.length > 1) {
         modeToggle = document.createElement('div');
         modeToggle.className='pv-mode-toggle';
-        ['value','ppsf'].forEach(m=>{ const btn=document.createElement('button'); btn.type='button'; btn.textContent= m==='value' ? 'Median Value' : 'Price / SqFt'; if(m===chartMode) btn.classList.add('active'); btn.addEventListener('click',()=>{ if(chartMode===m) return; chartMode=m; Array.from(modeToggle.children).forEach(c=>c.classList.remove('active')); btn.classList.add('active'); renderChart(); }); modeToggle.appendChild(btn); });
+        availableModes.forEach(m=>{ 
+          const btn=document.createElement('button'); 
+          btn.type='button'; 
+          btn.textContent = m==='value' ? 'Median Value' : 
+                           m==='ppsf' ? 'Price / SqFt' : 
+                           m==='newcon' ? 'New Construction' :
+                           m==='afford' ? 'Affordability' : m;
+          if(m===chartMode) btn.classList.add('active'); 
+          btn.addEventListener('click',()=>{ 
+            if(chartMode===m) return; 
+            chartMode=m; 
+            Array.from(modeToggle.children).forEach(c=>c.classList.remove('active')); 
+            btn.classList.add('active'); 
+            renderChart(); 
+          }); 
+          modeToggle.appendChild(btn); 
+        });
         card.appendChild(modeToggle);
       }
       const footer = document.createElement('div'); footer.className='pv-footer';
@@ -405,40 +452,54 @@ const renderPropertyData = (container, data) => {
       // Build yearly series for chart
       function renderChart() {
         if (!(d.yearly && d.yearly.length > 1 && window.ApexCharts)) return;
-        let categories, values, label;
+        let categories, values, label, yAxisConfig;
+        
         if (chartMode==='ppsf' && d.price_per_sqft && d.price_per_sqft.series) {
           const series = d.price_per_sqft.series;
           categories = series.map(p=>p.ym);
           values = series.map(p=>p.value);
           label = 'Price / SqFt';
+          // Y-axis config for PPSF: show increments of $100
+          const maxVal = Math.max(...values.filter(v=>typeof v==='number'));
+          const yMax = Math.max(100, Math.ceil(maxVal/100)*100);
+          const tickCount = Math.min(10, Math.ceil(yMax/100));
+          yAxisConfig = { min:0, max:yMax, tickAmount: tickCount, labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>'$'+v } };
+        } else if (chartMode==='newcon' && d.new_construction && d.new_construction.series) {
+          const series = d.new_construction.series;
+          categories = series.map(p=>p.ym);
+          values = series.map(p=>p.value);
+          label = 'New Construction Sales';
+          yAxisConfig = { labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>v.toLocaleString() } };
+        } else if (chartMode==='afford' && d.affordability_index && d.affordability_index.series) {
+          const series = d.affordability_index.series;
+          categories = series.map(p=>p.ym);
+          values = series.map(p=>p.value);
+          label = 'Income Needed ($)';
+          yAxisConfig = { labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>'$'+(v>=1000?Math.round(v/1000)+'K':v) } };
         } else {
+          // Default to median value
           const useMonthly = d.series && d.series.length > 2;
           if (useMonthly) { categories = d.series.map(p=>p.ym); values = d.series.map(p=>p.value); }
           else { categories = d.yearly.map(r=>r.year); values = d.yearly.map(r=>r.zhvi); }
           label = 'Median Value';
+          yAxisConfig = { labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>{ if(v===0) return '$0'; return '$'+(v>=1_000_000?(v/1_000_000).toFixed(1)+'M':(v/1000).toFixed(0)+'K'); } } };
         }
-        // Y-axis config differs for PPSF: show increments of $100
-        let yaxis;
-        if (chartMode==='ppsf') {
-          const maxVal = Math.max(...values.filter(v=>typeof v==='number'));
-          const yMax = Math.max(100, Math.ceil(maxVal/100)*100);
-          const tickCount = Math.min(10, Math.ceil(yMax/100));
-          yaxis = { min:0, max:yMax, tickAmount: tickCount, labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>'$'+v } };
-        } else {
-          yaxis = { labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>{ if(v===0) return '$0'; return '$'+(v>=1_000_000?(v/1_000_000).toFixed(1)+'M':(v/1000).toFixed(0)+'K'); } } };
-        }
+        
         const options = {
           series:[{ name: label, data: values }],
           chart:{ type:'area', height:260, toolbar:{show:false}, zoom:{enabled:false}, animations:{enabled:true}, foreColor:'#9ca3af' },
           stroke:{ curve:'smooth', width:2.2 },
           dataLabels:{ enabled:false },
           xaxis:{ type:'category', categories, tickAmount: Math.min(10, Math.max(4, Math.floor(categories.length/4))), labels:{ rotate:0, style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(val)=>{ if(val===undefined||val===null) return ''; const s=val.toString(); if(/^\d{4}-\d{2}$/.test(s)) return s.slice(0,4); if(/^\d{4}$/.test(s)) return s; const m = s.match(/(19|20)\d{2}/); return m?m[0]:s; } }, axisBorder:{show:false}, axisTicks:{show:false} },
-          yaxis,
+          yaxis: yAxisConfig,
           grid:{ borderColor:'#374151', strokeDashArray:4 },
-          tooltip:{ theme:'dark', x:{ show:false }, marker:{ show:true }, y:{ formatter:(val)=>'$'+val.toLocaleString() } },
+          tooltip:{ theme:'dark', x:{ show:false }, marker:{ show:true }, y:{ formatter:(val)=>{ 
+            if (chartMode === 'newcon') return val.toLocaleString() + ' sales';
+            return '$'+val.toLocaleString();
+          } } },
           fill:{ type:'gradient', gradient:{ shadeIntensity:1, opacityFrom:0.25, opacityTo:0.05, stops:[0,100] } },
           markers:{ size:0, hover:{size:5} },
-          colors:['#22c55e']
+          colors:[chartMode==='newcon'?'#3b82f6':chartMode==='afford'?'#f59e0b':'#22c55e']
         };
         chartDiv.innerHTML='';
         try { const chart=new ApexCharts(chartDiv, options); chart.render(); } catch(e){ console.warn('ApexCharts render failed', e); }

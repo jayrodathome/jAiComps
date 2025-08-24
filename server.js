@@ -101,6 +101,8 @@ const cache = new Map();
 // Zillow (or similar) property value dataset cache (zip -> {date, value})
 let zillowValues = null; // ZHVI
 let zillowPpsf = null; // price per sqft (metro-level)
+let zillowNewConstruction = null; // new construction sales count
+let zillowAffordability = null; // affordability index (income needed)
 let zillowDownloadTimestamp = null; // tracks last time any Zillow file was downloaded into data folder
 
 // Support loading either local file system path or remote HTTP(S) URL
@@ -238,6 +240,78 @@ async function ensurePpsfLoaded() {
   }
 }
 
+// Load Metro-level new construction sales count CSV
+async function loadZillowNewConstructionCSV(filePath) {
+  try {
+    let text; let origin;
+    if (/^https?:\/\//i.test(filePath)) { const resp = await fetch(filePath); if (!resp.ok) throw new Error(`HTTP ${resp.status}`); text = await resp.text(); origin = filePath; }
+    else { const abs = path.resolve(filePath); text = fs.readFileSync(abs,'utf8'); origin = abs; }
+    const lines = text.split(/\r?\n/).filter(l=>l.trim().length);
+    if (!lines.length) return;
+    const header = parseCsvLine(lines[0]);
+    const dateCols = header.map((h,i)=> (/^(19|20)\d{2}-\d{2}(-\d{2})?$/.test(h.trim()) ? {col:i, ym:h.trim().slice(0,7)}:null)).filter(Boolean);
+    const regionNameIdx = header.findIndex(h=>/RegionName/i.test(h));
+    const regionTypeIdx = header.findIndex(h=>/RegionType/i.test(h));
+    if (regionNameIdx === -1 || regionTypeIdx === -1) { console.warn('New Construction CSV missing RegionName/RegionType'); return; }
+    const msaMap = new Map();
+    for (let li=1; li<lines.length; li++) {
+      const row = parseCsvLine(lines[li]);
+      if (row.length < header.length) continue;
+      const regionName = row[regionNameIdx]?.trim();
+      const regionType = (row[regionTypeIdx]||'').trim().toLowerCase();
+      if (!regionName || regionType !== 'msa') continue;
+      const series=[]; let latest=null;
+      for (let di=0; di<dateCols.length; di++) { const {col, ym} = dateCols[di]; const valStr=row[col]; if (valStr && !isNaN(+valStr)) { const v=+valStr; series.push({ym,value:v}); latest={ym,value:v}; } } 
+      if (!latest) continue;
+      msaMap.set(regionName.toUpperCase(), { date: latest.ym, value: latest.value, series });
+    }
+    zillowNewConstruction = { loadedAt: new Date(), msaCount: msaMap.size, msaMap };
+    console.log(`Loaded Zillow New Construction dataset from ${origin} -> MSAs: ${msaMap.size}`);
+  } catch(e){ console.warn('Failed to load Zillow New Construction CSV:', e.message); }
+}
+
+// Load Metro-level affordability index CSV (income needed)
+async function loadZillowAffordabilityCSV(filePath) {
+  try {
+    let text; let origin;
+    if (/^https?:\/\//i.test(filePath)) { const resp = await fetch(filePath); if (!resp.ok) throw new Error(`HTTP ${resp.status}`); text = await resp.text(); origin = filePath; }
+    else { const abs = path.resolve(filePath); text = fs.readFileSync(abs,'utf8'); origin = abs; }
+    const lines = text.split(/\r?\n/).filter(l=>l.trim().length);
+    if (!lines.length) return;
+    const header = parseCsvLine(lines[0]);
+    const dateCols = header.map((h,i)=> (/^(19|20)\d{2}-\d{2}(-\d{2})?$/.test(h.trim()) ? {col:i, ym:h.trim().slice(0,7)}:null)).filter(Boolean);
+    const regionNameIdx = header.findIndex(h=>/RegionName/i.test(h));
+    const regionTypeIdx = header.findIndex(h=>/RegionType/i.test(h));
+    if (regionNameIdx === -1 || regionTypeIdx === -1) { console.warn('Affordability CSV missing RegionName/RegionType'); return; }
+    const msaMap = new Map();
+    for (let li=1; li<lines.length; li++) {
+      const row = parseCsvLine(lines[li]);
+      if (row.length < header.length) continue;
+      const regionName = row[regionNameIdx]?.trim();
+      const regionType = (row[regionTypeIdx]||'').trim().toLowerCase();
+      if (!regionName || regionType !== 'msa') continue;
+      const series=[]; let latest=null;
+      for (let di=0; di<dateCols.length; di++) { const {col, ym} = dateCols[di]; const valStr=row[col]; if (valStr && !isNaN(+valStr)) { const v=+valStr; series.push({ym,value:v}); latest={ym,value:v}; } } 
+      if (!latest) continue;
+      msaMap.set(regionName.toUpperCase(), { date: latest.ym, value: latest.value, series });
+    }
+    zillowAffordability = { loadedAt: new Date(), msaCount: msaMap.size, msaMap };
+    console.log(`Loaded Zillow Affordability dataset from ${origin} -> MSAs: ${msaMap.size}`);
+  } catch(e){ console.warn('Failed to load Zillow Affordability CSV:', e.message); }
+}
+
+async function ensureNewConstructionLoaded() {
+  if (!zillowNewConstruction && config.zillowDatasets && config.zillowDatasets.newConstructionSales) {
+    await loadZillowNewConstructionCSV(config.zillowDatasets.newConstructionSales);
+  }
+}
+
+async function ensureAffordabilityLoaded() {
+  if (!zillowAffordability && config.zillowDatasets && config.zillowDatasets.affordabilityIndex) {
+    await loadZillowAffordabilityCSV(config.zillowDatasets.affordabilityIndex);
+  }
+}
+
 function findMsaKeyForAddress(address, msaMap) {
   if (!address || !msaMap || !msaMap.size) return null;
   let city = null, state = null;
@@ -291,35 +365,76 @@ async function ensureZillowLoaded() {
  * Download latest Zillow CSV referenced by env variable into data folder and reload.
  */
 async function refreshZillowDataset() {
-  // Determine primary ZHVI source (env override or config default)
+  // Determine sources for all datasets
   const zhviSrc = process.env.ZILLOW_ZIP_ZHVI_CSV || config.zillowDatasets.zhviWide;
   const ppsfSrc = config.zillowDatasets.pricePerSqft;
+  const newConSrc = config.zillowDatasets.newConstructionSales;
+  const affordSrc = config.zillowDatasets.affordabilityIndex;
   if (!zhviSrc) throw new Error('No ZHVI dataset URL configured');
-  // Local path case for ZHVI only; PPSF still remote
+  
+  // Local path case for ZHVI only; others still remote
   if (!/^https?:\/\//i.test(zhviSrc)) {
     await loadZillowWideCSV(zhviSrc);
-    if (ppsfSrc) await loadZillowPricePerSqftCSV(ppsfSrc); // remote
-    return { mode: 'reload-local', zhvi_source: zhviSrc, ppsf_source: ppsfSrc, zhvi: zillowValues, ppsf: zillowPpsf };
+    if (ppsfSrc) await loadZillowPricePerSqftCSV(ppsfSrc);
+    if (newConSrc) await loadZillowNewConstructionCSV(newConSrc);
+    if (affordSrc) await loadZillowAffordabilityCSV(affordSrc);
+    return { mode: 'reload-local', zhvi_source: zhviSrc, ppsf_source: ppsfSrc, newcon_source: newConSrc, afford_source: affordSrc, zhvi: zillowValues, ppsf: zillowPpsf, newcon: zillowNewConstruction, afford: zillowAffordability };
   }
+  
   try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
   const ts = Date.now();
   const zhviName = 'zillow_latest.csv';
   const ppsfName = 'zillow_ppsf_latest.csv';
+  const newConName = 'zillow_newcon_latest.csv';
+  const affordName = 'zillow_afford_latest.csv';
   const zhviTarget = path.join(DATA_DIR, zhviName);
   const ppsfTarget = path.join(DATA_DIR, ppsfName);
-  // Download both (parallel)
-  const [zhviResp, ppsfResp] = await Promise.all([
+  const newConTarget = path.join(DATA_DIR, newConName);
+  const affordTarget = path.join(DATA_DIR, affordName);
+  
+  // Download all datasets in parallel
+  const [zhviResp, ppsfResp, newConResp, affordResp] = await Promise.all([
     fetch(zhviSrc),
-    ppsfSrc ? fetch(ppsfSrc) : Promise.resolve(null)
+    ppsfSrc ? fetch(ppsfSrc) : Promise.resolve(null),
+    newConSrc ? fetch(newConSrc) : Promise.resolve(null),
+    affordSrc ? fetch(affordSrc) : Promise.resolve(null)
   ]);
+  
   if (!zhviResp.ok) throw new Error(`ZHVI download failed: HTTP ${zhviResp.status}`);
   if (ppsfResp && !ppsfResp.ok) console.warn('PPSF download failed:', ppsfResp.status);
+  if (newConResp && !newConResp.ok) console.warn('New Construction download failed:', newConResp.status);
+  if (affordResp && !affordResp.ok) console.warn('Affordability download failed:', affordResp.status);
+  
+  // Save all files
   fs.writeFileSync(zhviTarget, Buffer.from(await zhviResp.arrayBuffer()));
   if (ppsfResp && ppsfResp.ok) fs.writeFileSync(ppsfTarget, Buffer.from(await ppsfResp.arrayBuffer()));
+  if (newConResp && newConResp.ok) fs.writeFileSync(newConTarget, Buffer.from(await newConResp.arrayBuffer()));
+  if (affordResp && affordResp.ok) fs.writeFileSync(affordTarget, Buffer.from(await affordResp.arrayBuffer()));
+  
   zillowDownloadTimestamp = new Date();
+  
+  // Load all datasets
   await loadZillowWideCSV(zhviTarget);
   if (ppsfResp && ppsfResp.ok) await loadZillowPricePerSqftCSV(ppsfTarget);
-  return { mode: 'downloaded', zhvi_saved_as: zhviTarget, ppsf_saved_as: ppsfResp?.ok ? ppsfTarget : null, zhvi_source: zhviSrc, ppsf_source: ppsfSrc, downloaded_at: zillowDownloadTimestamp, zhvi: zillowValues, ppsf: zillowPpsf };
+  if (newConResp && newConResp.ok) await loadZillowNewConstructionCSV(newConTarget);
+  if (affordResp && affordResp.ok) await loadZillowAffordabilityCSV(affordTarget);
+  
+  return { 
+    mode: 'downloaded', 
+    zhvi_saved_as: zhviTarget, 
+    ppsf_saved_as: ppsfResp?.ok ? ppsfTarget : null,
+    newcon_saved_as: newConResp?.ok ? newConTarget : null,
+    afford_saved_as: affordResp?.ok ? affordTarget : null,
+    zhvi_source: zhviSrc, 
+    ppsf_source: ppsfSrc,
+    newcon_source: newConSrc,
+    afford_source: affordSrc,
+    downloaded_at: zillowDownloadTimestamp, 
+    zhvi: zillowValues, 
+    ppsf: zillowPpsf,
+    newcon: zillowNewConstruction,
+    afford: zillowAffordability
+  };
 }
 
 // ---------------- Geocoding & Metro distance helpers ---------------- //
@@ -728,6 +843,8 @@ app.post('/api/getPropertyDetails', async (req, res) => {
     if (wants('property_value')) {
       await ensureZillowLoaded();
       await ensurePpsfLoaded();
+      await ensureNewConstructionLoaded();
+      await ensureAffordabilityLoaded();
       if (zillowValues && (zillowValues.zipMap || zillowValues.msaMap)) {
         const zip = extractZip(address);
         let pv = null;
@@ -874,6 +991,40 @@ app.post('/api/getPropertyDetails', async (req, res) => {
               value: ppsfEntry.value,
               series: ppsfEntry.series.slice(-240),
               metro_key: ppsfKey,
+              inferred_from_zip: pv.type === 'zip'
+            };
+          }
+        }
+        
+        // Attach new construction sales data
+        if (zillowNewConstruction && zillowNewConstruction.msaMap) {
+          let newConKey = null;
+          if (pv.type === 'msa') newConKey = pv.key.toUpperCase();
+          else newConKey = findMsaKeyForAddress(address, zillowNewConstruction.msaMap);
+          if (newConKey && zillowNewConstruction.msaMap.has(newConKey)) {
+            const newConEntry = zillowNewConstruction.msaMap.get(newConKey);
+            propertyData.property_value.new_construction = {
+              latest_month: newConEntry.date,
+              value: newConEntry.value,
+              series: newConEntry.series.slice(-240),
+              metro_key: newConKey,
+              inferred_from_zip: pv.type === 'zip'
+            };
+          }
+        }
+        
+        // Attach affordability index data
+        if (zillowAffordability && zillowAffordability.msaMap) {
+          let affordKey = null;
+          if (pv.type === 'msa') affordKey = pv.key.toUpperCase();
+          else affordKey = findMsaKeyForAddress(address, zillowAffordability.msaMap);
+          if (affordKey && zillowAffordability.msaMap.has(affordKey)) {
+            const affordEntry = zillowAffordability.msaMap.get(affordKey);
+            propertyData.property_value.affordability_index = {
+              latest_month: affordEntry.date,
+              value: affordEntry.value,
+              series: affordEntry.series.slice(-240),
+              metro_key: affordKey,
               inferred_from_zip: pv.type === 'zip'
             };
           }

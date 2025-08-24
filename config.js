@@ -78,6 +78,8 @@ module.exports = {
   }),
   zillowDatasets: {
     zhviWide: process.env.ZILLOW_ZIP_ZHVI_CSV || 'https://files.zillowstatic.com/research/public_csvs/zhvi/Metro_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv',
-    pricePerSqft: process.env.ZILLOW_MSA_PPSF_CSV || 'https://files.zillowstatic.com/research/public_csvs/new_con_median_sale_price_per_sqft/Metro_new_con_median_sale_price_per_sqft_uc_sfrcondo_month.csv'
+    pricePerSqft: process.env.ZILLOW_MSA_PPSF_CSV || 'https://files.zillowstatic.com/research/public_csvs/new_con_median_sale_price_per_sqft/Metro_new_con_median_sale_price_per_sqft_uc_sfrcondo_month.csv',
+    newConstructionSales: process.env.ZILLOW_NEW_CON_SALES_CSV || 'https://files.zillowstatic.com/research/public_csvs/new_con_sales_count_raw/Metro_new_con_sales_count_raw_uc_sfrcondo_month.csv?t=1755874217',
+    affordabilityIndex: process.env.ZILLOW_AFFORDABILITY_CSV || 'https://files.zillowstatic.com/research/public_csvs/new_homeowner_income_needed/Metro_new_homeowner_income_needed_downpayment_0.20_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv?t=1755874217'
   }
 };
