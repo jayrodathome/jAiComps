@@ -405,6 +405,18 @@ const renderPropertyData = (container, data) => {
           addStat('Income Needed', formattedVal);
         }
       }
+      
+      // Add renter demand index stat
+      if (d.renter_demand) {
+        let renterVal = d.renter_demand.value;
+        if ((renterVal === undefined || renterVal === null) && Array.isArray(d.renter_demand.series)) {
+          const lastValid = [...d.renter_demand.series].reverse().find(p=>p && p.value !== undefined && p.value !== null);
+          renterVal = lastValid ? lastValid.value : null;
+        }
+        if (renterVal !== undefined && renterVal !== null) {
+          addStat('Renter Demand', renterVal.toFixed(1) + ' index');
+        }
+      }
       const chartDiv = document.createElement('div'); chartDiv.id = 'propertyValueChart'; chartDiv.className='pv-chart';
       // Chart mode toggle for multiple datasets
       let chartMode = 'value';
@@ -414,6 +426,7 @@ const renderPropertyData = (container, data) => {
       if (d.price_per_sqft && d.price_per_sqft.series) availableModes.push('ppsf');
       if (d.new_construction && d.new_construction.series) availableModes.push('newcon');
       if (d.affordability_index && d.affordability_index.series) availableModes.push('afford');
+      if (d.renter_demand && d.renter_demand.series) availableModes.push('renter');
       
       if (availableModes.length > 1) {
         modeToggle = document.createElement('div');
@@ -424,7 +437,8 @@ const renderPropertyData = (container, data) => {
           btn.textContent = m==='value' ? 'Median Value' : 
                            m==='ppsf' ? 'Price / SqFt' : 
                            m==='newcon' ? 'New Construction' :
-                           m==='afford' ? 'Affordability' : m;
+                           m==='afford' ? 'Affordability' :
+                           m==='renter' ? 'Renter Demand' : m;
           if(m===chartMode) btn.classList.add('active'); 
           btn.addEventListener('click',()=>{ 
             if(chartMode===m) return; 
@@ -476,6 +490,12 @@ const renderPropertyData = (container, data) => {
           values = series.map(p=>p.value);
           label = 'Income Needed ($)';
           yAxisConfig = { labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>'$'+(v>=1000?Math.round(v/1000)+'K':v) } };
+        } else if (chartMode==='renter' && d.renter_demand && d.renter_demand.series) {
+          const series = d.renter_demand.series;
+          categories = series.map(p=>p.ym);
+          values = series.map(p=>p.value);
+          label = 'Renter Demand Index';
+          yAxisConfig = { labels:{ style:{ colors:'#94a3b8', fontSize:'11px' }, formatter:(v)=>v.toFixed(1) } };
         } else {
           // Default to median value
           const useMonthly = d.series && d.series.length > 2;
@@ -495,11 +515,12 @@ const renderPropertyData = (container, data) => {
           grid:{ borderColor:'#374151', strokeDashArray:4 },
           tooltip:{ theme:'dark', x:{ show:false }, marker:{ show:true }, y:{ formatter:(val)=>{ 
             if (chartMode === 'newcon') return val.toLocaleString() + ' sales';
+            if (chartMode === 'renter') return val.toFixed(1) + ' index';
             return '$'+val.toLocaleString();
           } } },
           fill:{ type:'gradient', gradient:{ shadeIntensity:1, opacityFrom:0.25, opacityTo:0.05, stops:[0,100] } },
           markers:{ size:0, hover:{size:5} },
-          colors:[chartMode==='newcon'?'#3b82f6':chartMode==='afford'?'#f59e0b':'#22c55e']
+          colors:[chartMode==='newcon'?'#3b82f6':chartMode==='afford'?'#f59e0b':chartMode==='renter'?'#8b5cf6':'#22c55e']
         };
         chartDiv.innerHTML='';
         try { const chart=new ApexCharts(chartDiv, options); chart.render(); } catch(e){ console.warn('ApexCharts render failed', e); }
